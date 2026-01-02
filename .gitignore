@@ -7,6 +7,8 @@ yarn.lock
 pnpm-lock.yaml
 
 # Generated files
+libs/
+**/libs/
 libs/contracts-ts/generated/
 
 # Logs
