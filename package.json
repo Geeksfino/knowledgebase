@@ -1,0 +1,27 @@
+{
+  "name": "@customer/knowledgebase",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "External knowledge base provider using txtai for RAG",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "start": "bun run src/index.ts",
+    "test": "bun test",
+    "build": "bun build src/index.ts --outdir dist --target bun",
+    "generate-contracts": "./scripts/generate-contracts.sh",
+    "generate-types": "bunx openapi-typescript contracts/knowledge-provider.yaml -o src/types/api.ts",
+    "validate": "./scripts/validate-service.sh",
+    "validate-types": "bun run scripts/validate-contract-types.ts"
+  },
+  "dependencies": {
+    "pdf-parse": "^1.1.1",
+    "marked": "^11.1.1"
+  },
+  "devDependencies": {
+    "bun-types": "latest",
+    "@types/pdf-parse": "^1.1.4",
+    "openapi-typescript": "^6.7.3"
+  }
+}
+

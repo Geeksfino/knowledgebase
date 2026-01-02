@@ -1,0 +1,21 @@
+# txtai configuration
+# See: https://neuml.github.io/txtai/api/configuration/
+
+# Embeddings configuration
+embeddings:
+  # Use a lightweight model for local deployment
+  path: sentence-transformers/all-MiniLM-L6-v2
+  # Enable content storage for retrieval
+  content: true
+  # Backend configuration
+  backend: faiss
+
+# API configuration
+api:
+  # Enable all endpoints
+  embeddings: true
+  # CORS configuration
+  cors:
+    origins:
+      - "*"
+

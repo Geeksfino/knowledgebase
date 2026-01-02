@@ -1,0 +1,80 @@
+# Knowledge Base Provider - Docker Compose
+#
+# 独立部署的知识库 Provider 服务
+# txtai 服务仅内部访问，不对外暴露端口
+#
+# Usage:
+#   docker-compose up -d        # 启动所有服务
+#   docker-compose logs -f      # 查看日志
+#   docker-compose down         # 停止所有服务
+#
+# 对外暴露端口:
+#   - 8080: Knowledge Base Provider API
+
+version: '3.8'
+
+services:
+  # txtai 服务（内部服务，不对外暴露端口）
+  txtai:
+    image: neuml/txtai:latest
+    container_name: knowledgebase-txtai
+    # expose 仅暴露给内部网络，不映射到主机
+    expose:
+      - "8000"
+    environment:
+      # 使用轻量级模型
+      - CONFIG=/app/config.yml
+    volumes:
+      - txtai_data:/app/data
+      - ./txtai-config.yml:/app/config.yml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - knowledgebase-network
+    restart: unless-stopped
+
+  # Knowledge Base Provider 服务（对外暴露）
+  knowledgebase:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: knowledgebase-provider
+    ports:
+      - "8080:8080"  # 只暴露 Provider 接口
+    environment:
+      - PORT=8080
+      - HOST=0.0.0.0
+      - TXTAI_URL=http://txtai:8000  # 使用内部服务名
+      - PROVIDER_NAME=customer_kb
+      - STORAGE_PATH=/data/documents
+      - DEBUG=false
+    volumes:
+      - knowledgebase_data:/data/documents
+    depends_on:
+      txtai:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/provider/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - knowledgebase-network
+    restart: unless-stopped
+
+networks:
+  knowledgebase-network:
+    name: knowledgebase-network
+    driver: bridge
+
+volumes:
+  txtai_data:
+    name: knowledgebase_txtai_data
+  knowledgebase_data:
+    name: knowledgebase_data
+

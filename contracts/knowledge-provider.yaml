@@ -1,0 +1,381 @@
+openapi: 3.0.3
+info:
+  title: Knowledge Base Provider API
+  description: |
+    External knowledge base provider service using txtai for RAG.
+    Implements standard Provider interface for integration with chatkit-middleware.
+  version: 1.0.0
+  license:
+    name: MIT
+
+servers:
+  - url: http://{host}:{port}
+    description: Knowledge base provider endpoint
+    variables:
+      host:
+        default: localhost
+      port:
+        default: '8080'
+
+paths:
+  /provider/health:
+    get:
+      operationId: healthCheck
+      summary: Health check
+      description: Check provider health and txtai availability
+      responses:
+        '200':
+          description: Provider is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /provider/search:
+    post:
+      operationId: searchKnowledge
+      summary: Search knowledge base
+      description: |
+        Search knowledge base using hybrid retrieval (vector + keyword).
+        Called by Context Assembly Service during context assembly.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderSearchRequest'
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderSearchResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Provider error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /documents:
+    post:
+      operationId: uploadDocument
+      summary: Upload and index a document
+      description: Upload a document for indexing into the knowledge base
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DocumentUploadRequest'
+      responses:
+        '200':
+          description: Document uploaded and indexed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentUploadResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      operationId: listDocuments
+      summary: List all documents
+      description: List all indexed documents in the knowledge base
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of documents
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentListResponse'
+
+  /documents/{documentId}:
+    get:
+      operationId: getDocument
+      summary: Get document details
+      parameters:
+        - name: documentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Document details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+        '404':
+          description: Document not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      operationId: deleteDocument
+      summary: Delete a document
+      parameters:
+        - name: documentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Document deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResponse'
+        '404':
+          description: Document not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - version
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        version:
+          type: string
+        txtai:
+          type: object
+          properties:
+            available:
+              type: boolean
+            url:
+              type: string
+
+    ProviderSearchRequest:
+      type: object
+      required:
+        - user_id
+        - query
+      properties:
+        user_id:
+          type: string
+          description: User ID for access control and personalization
+        query:
+          type: string
+          description: Search query text
+        limit:
+          type: integer
+          default: 5
+          minimum: 1
+          maximum: 20
+          description: Maximum number of chunks to return
+        token_budget:
+          type: integer
+          description: Token budget for results (approximate)
+        filters:
+          type: object
+          additionalProperties: true
+          description: Provider-specific filters (categories, tags, etc.)
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Additional context (intent, conversation_id, etc.)
+
+    ProviderSearchResponse:
+      type: object
+      required:
+        - provider_name
+        - chunks
+        - total_tokens
+      properties:
+        provider_name:
+          type: string
+          description: Provider identifier (must match configuration)
+        chunks:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderChunk'
+        total_tokens:
+          type: integer
+          description: Total token count of all chunks
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Provider-specific metadata
+
+    ProviderChunk:
+      type: object
+      required:
+        - chunk_id
+        - content
+        - score
+      properties:
+        chunk_id:
+          type: string
+          description: Unique chunk identifier
+        content:
+          type: string
+          description: Chunk text content
+        score:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Relevance score (0-1)
+        document_id:
+          type: string
+          description: Source document ID
+        document_title:
+          type: string
+          description: Source document title
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Chunk-specific metadata
+
+    DocumentUploadRequest:
+      type: object
+      required:
+        - title
+        - content
+      properties:
+        title:
+          type: string
+          description: Document title
+        content:
+          type: string
+          description: Document content (text)
+        category:
+          type: string
+          description: Document category (optional)
+        description:
+          type: string
+          description: Document description (optional)
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Custom metadata (optional)
+
+    DocumentUploadResponse:
+      type: object
+      required:
+        - document_id
+        - status
+      properties:
+        document_id:
+          type: string
+        status:
+          type: string
+          enum: [indexed, processing, failed]
+        chunks_count:
+          type: integer
+          description: Number of chunks created
+        message:
+          type: string
+
+    Document:
+      type: object
+      required:
+        - document_id
+        - title
+        - created_at
+        - status
+      properties:
+        document_id:
+          type: string
+        title:
+          type: string
+        category:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum: [indexed, processing, failed]
+        chunks_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties: true
+
+    DocumentListResponse:
+      type: object
+      required:
+        - documents
+        - total
+      properties:
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/Document'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    DeleteResponse:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - code
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+

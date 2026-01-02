@@ -1,0 +1,4 @@
+node_modules/
+libs/contracts-ts/generated/
+*.log
+.DS_Store
