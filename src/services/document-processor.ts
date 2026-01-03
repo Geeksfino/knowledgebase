@@ -7,6 +7,7 @@
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { countTokens } from '../utils/token-counter.js';
+import type { ProcessedMedia, MediaType } from './media-processor.js';
 
 export interface DocumentChunk {
   id: string;
@@ -17,6 +18,8 @@ export interface DocumentChunk {
     chunk_index: number;
     start_char?: number;
     end_char?: number;
+    media_type?: MediaType;
+    media_url?: string;
     [key: string]: unknown;
   };
 }
@@ -27,6 +30,8 @@ export interface ProcessedDocument {
   chunks: DocumentChunk[];
   total_chunks: number;
   created_at: string;
+  media_type?: MediaType;
+  media_url?: string;
 }
 
 export class DocumentProcessor {
@@ -62,6 +67,89 @@ export class DocumentProcessor {
       chunks,
       total_chunks: chunks.length,
       created_at: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Process media file and create chunks
+   * For images/videos, creates chunks from processed media
+   */
+  processMedia(
+    documentId: string,
+    title: string,
+    processedMedia: ProcessedMedia,
+    mediaUrl: string,
+    metadata?: Record<string, unknown>
+  ): ProcessedDocument {
+    const chunks: DocumentChunk[] = [];
+
+    // For images, create a single chunk with the image description
+    if (processedMedia.mediaType === 'image' && processedMedia.image) {
+      const chunk: DocumentChunk = {
+        id: `${documentId}_chunk_0`,
+        text: processedMedia.image.text,
+        metadata: {
+          document_id: documentId,
+          document_title: title,
+          chunk_index: 0,
+          media_type: 'image',
+          media_url: mediaUrl,
+          ...metadata,
+        },
+      };
+      chunks.push(chunk);
+    }
+    // For videos, create chunks for each frame
+    else if (processedMedia.mediaType === 'video' && processedMedia.video) {
+      processedMedia.video.frames.forEach((frame, index) => {
+        const chunk: DocumentChunk = {
+          id: `${documentId}_chunk_${index}`,
+          text: frame.text,
+          metadata: {
+            document_id: documentId,
+            document_title: title,
+            chunk_index: index,
+            media_type: 'video',
+            media_url: mediaUrl,
+            frame_index: index,
+            ...metadata,
+          },
+        };
+        chunks.push(chunk);
+      });
+    }
+    // For other media types, create a single chunk
+    else {
+      const chunk: DocumentChunk = {
+        id: `${documentId}_chunk_0`,
+        text: processedMedia.text,
+        metadata: {
+          document_id: documentId,
+          document_title: title,
+          chunk_index: 0,
+          media_type: processedMedia.mediaType,
+          media_url: mediaUrl,
+          ...metadata,
+        },
+      };
+      chunks.push(chunk);
+    }
+
+    logger.info('Media processed', {
+      documentId,
+      title,
+      mediaType: processedMedia.mediaType,
+      chunksCount: chunks.length,
+    });
+
+    return {
+      document_id: documentId,
+      title,
+      chunks,
+      total_chunks: chunks.length,
+      created_at: new Date().toISOString(),
+      media_type: processedMedia.mediaType,
+      media_url: mediaUrl,
     };
   }
 

@@ -8,9 +8,13 @@ import { logger } from '../utils/logger.js';
 import { txtaiService } from '../services/txtai-service.js';
 import { documentProcessor } from '../services/document-processor.js';
 import { documentStore, type StoredDocument } from '../services/document-store.js';
+import { mediaProcessor, type MediaFile } from '../services/media-processor.js';
+import { fileStorage } from '../services/file-storage.js';
+import { config } from '../config.js';
 
 // Import types from generated contract
-import type { components } from '../../libs/contracts-ts/generated/knowledge-provider.js';
+// Following contract-first pattern: contracts are sacred, implementations are disposable
+import type { components } from '@knowledgebase/contracts-ts/generated/knowledge-provider';
 
 // Extract types from contract
 export type DocumentUploadRequest = components['schemas']['DocumentUploadRequest'];
@@ -69,6 +73,7 @@ export async function handleUploadDocument(
       chunks_count: processed.total_chunks,
       created_at: processed.created_at,
       updated_at: processed.created_at,
+      media_type: 'text', // Text documents default to 'text'
       metadata: request.metadata,
     });
 
@@ -136,6 +141,202 @@ export function handleGetDocument(documentId: string): StoredDocument | null {
 }
 
 /**
+ * Handle file upload (multipart/form-data)
+ */
+export async function handleUploadFile(
+  formData: FormData
+): Promise<DocumentUploadResponse> {
+  const documentId = generateDocumentId();
+
+  try {
+    logger.info('Processing file upload', { documentId });
+    
+    // Extract form fields
+    const title = formData.get('title');
+    const file = formData.get('file');
+    const category = formData.get('category');
+    const description = formData.get('description');
+    const metadataStr = formData.get('metadata');
+
+    logger.info('Form data extracted', {
+      documentId,
+      hasTitle: !!title,
+      hasFile: !!file,
+      titleType: typeof title,
+      fileType: file?.constructor?.name,
+    });
+
+    if (!title || typeof title !== 'string') {
+      throw new Error('Missing or invalid title field');
+    }
+
+    if (!file || !(file instanceof File)) {
+      throw new Error('Missing or invalid file field');
+    }
+
+    // Detect MIME type from filename if not provided
+    let mimeType = file.type;
+    if (!mimeType || mimeType === 'application/octet-stream') {
+      // Try to detect from file extension
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      const mimeTypes: Record<string, string> = {
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        png: 'image/png',
+        gif: 'image/gif',
+        webp: 'image/webp',
+        mp4: 'video/mp4',
+        avi: 'video/x-msvideo',
+        mov: 'video/quicktime',
+      };
+      mimeType = mimeTypes[ext || ''] || 'application/octet-stream';
+    }
+
+    logger.info('File info', {
+      documentId,
+      filename: file.name,
+      size: file.size,
+      mimeType: mimeType,
+      fileType: file.type,
+    });
+
+    // Read file buffer
+    let fileBuffer: Buffer;
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      fileBuffer = Buffer.from(arrayBuffer);
+      logger.info('File buffer read', { documentId, bufferSize: fileBuffer.length });
+    } catch (error) {
+      logger.error('Failed to read file buffer', {
+        documentId,
+        error: error instanceof Error ? error.message : 'Unknown',
+      });
+      throw new Error(`Failed to read file: ${error instanceof Error ? error.message : 'Unknown'}`);
+    }
+
+    // Validate file type
+    const mediaFile: MediaFile = {
+      filename: file.name,
+      buffer: fileBuffer,
+      mimeType: mimeType,
+      size: file.size,
+    };
+
+    if (!mediaProcessor.isSupportedFileType(mediaFile.mimeType)) {
+      throw new Error(`Unsupported file type: ${mediaFile.mimeType}. Supported types: images (jpg, png, gif, webp), videos (mp4, avi, mov)`);
+    }
+
+    // Check file size
+    if (mediaFile.size > config.storage.maxFileSize) {
+      throw new Error(`File size exceeds maximum: ${config.storage.maxFileSize} bytes`);
+    }
+
+    logger.info('File upload started', {
+      documentId,
+      title,
+      filename: file.name,
+      size: file.size,
+      mimeType: file.type,
+    });
+
+    // Process media file (pass title and description for better indexing)
+    const processedMedia = await mediaProcessor.processMedia(mediaFile, title, description);
+
+    // Save file to storage
+    const mediaUrl = await fileStorage.saveFile(
+      documentId,
+      file.name,
+      mediaFile.buffer
+    );
+
+    // Process media into chunks
+    const processed = documentProcessor.processMedia(
+      documentId,
+      title,
+      processedMedia,
+      mediaUrl,
+      metadataStr ? JSON.parse(metadataStr) : undefined
+    );
+
+    // Index chunks in txtai
+    // For images/videos, we'll use the multimodal index
+    if (processedMedia.mediaType === 'image' || processedMedia.mediaType === 'video') {
+      // Use multimodal indexing for images/videos
+      await txtaiService.indexMultimodal(
+        processed.chunks.map((chunk) => ({
+          id: chunk.id,
+          text: chunk.text,
+          metadata: chunk.metadata,
+          // For images, we can pass the image path/URL to txtai
+          // txtai will handle the actual image processing
+        }))
+      );
+    } else {
+      // Use regular text indexing
+      await txtaiService.index(
+        processed.chunks.map((chunk) => ({
+          id: chunk.id,
+          text: chunk.text,
+          metadata: chunk.metadata,
+        }))
+      );
+    }
+
+    // Store document metadata
+    documentStore.upsert({
+      document_id: documentId,
+      title,
+      category,
+      description,
+      status: 'indexed',
+      chunks_count: processed.total_chunks,
+      created_at: processed.created_at,
+      updated_at: processed.created_at,
+      media_type: processedMedia.mediaType,
+      media_url: mediaUrl,
+      metadata: metadataStr ? JSON.parse(metadataStr) : undefined,
+    });
+
+    logger.info('File upload completed', {
+      documentId,
+      mediaType: processedMedia.mediaType,
+      chunksCount: processed.total_chunks,
+    });
+
+    return {
+      document_id: documentId,
+      status: 'indexed',
+      chunks_count: processed.total_chunks,
+      message: `File indexed successfully with ${processed.total_chunks} chunks`,
+    };
+  } catch (error) {
+    logger.error('File upload failed', {
+      documentId,
+      error: error instanceof Error ? error.message : 'Unknown',
+    });
+
+    // Store failed document
+    documentStore.upsert({
+      document_id: documentId,
+      title: (formData.get('title') as string) || 'Unknown',
+      category: (formData.get('category') as string) || undefined,
+      description: (formData.get('description') as string) || undefined,
+      status: 'failed',
+      chunks_count: 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      metadata: undefined,
+    });
+
+    return {
+      document_id: documentId,
+      status: 'failed',
+      message: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
  * Handle delete document
  */
 export async function handleDeleteDocument(
@@ -155,6 +356,14 @@ export async function handleDeleteDocument(
     const chunkIds = documentStore.getChunkIds(documentId);
     if (chunkIds.length > 0) {
       await txtaiService.delete(chunkIds);
+    }
+
+    // Delete media files if they exist
+    if (doc.media_url) {
+      const filename = doc.media_url.split('/').pop();
+      if (filename) {
+        await fileStorage.deleteFile(documentId, filename);
+      }
     }
 
     // Delete from store

@@ -9,7 +9,7 @@ export const config = {
 
   // txtai 配置
   txtai: {
-    url: process.env.TXTAI_URL || 'http://localhost:8000',
+    url: process.env.TXTAI_URL || 'http://127.0.0.1:8000',
     apiKey: process.env.TXTAI_API_KEY,
     timeout: parseInt(process.env.TXTAI_TIMEOUT || '30000'),
   },
@@ -18,6 +18,8 @@ export const config = {
   storage: {
     path: process.env.STORAGE_PATH || './data/documents',
     maxFileSize: parseInt(process.env.MAX_FILE_SIZE || '10485760'), // 10MB
+    mediaPath: process.env.MEDIA_PATH || './data/media', // 媒体文件存储路径
+    baseUrl: process.env.MEDIA_BASE_URL || 'http://localhost:8080/media', // 媒体文件访问基础URL
   },
 
   // 检索配置

@@ -68,13 +68,19 @@ paths:
     post:
       operationId: uploadDocument
       summary: Upload and index a document
-      description: Upload a document for indexing into the knowledge base
+      description: |
+        Upload a document for indexing into the knowledge base.
+        Supports both text content (JSON) and file uploads (multipart/form-data).
+        Supported file types: images (jpg, png, gif, webp), videos (mp4, avi, mov), and text files.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/DocumentUploadRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/FileUploadRequest'
       responses:
         '200':
           description: Document uploaded and indexed
@@ -250,7 +256,7 @@ components:
           description: Unique chunk identifier
         content:
           type: string
-          description: Chunk text content
+          description: Chunk text content (text description for images/videos, or actual text for documents)
         score:
           type: number
           minimum: 0
@@ -262,6 +268,14 @@ components:
         document_title:
           type: string
           description: Source document title
+        media_type:
+          type: string
+          enum: [text, image, video, audio]
+          description: Type of media content (default: text)
+        media_url:
+          type: string
+          format: uri
+          description: URL to the media file (for images/videos)
         metadata:
           type: object
           additionalProperties: true
@@ -289,6 +303,29 @@ components:
           type: object
           additionalProperties: true
           description: Custom metadata (optional)
+
+    FileUploadRequest:
+      type: object
+      required:
+        - title
+        - file
+      properties:
+        title:
+          type: string
+          description: Document title
+        file:
+          type: string
+          format: binary
+          description: File to upload (image, video, or text file)
+        category:
+          type: string
+          description: Document category (optional)
+        description:
+          type: string
+          description: Document description (optional)
+        metadata:
+          type: string
+          description: JSON string of custom metadata (optional)
 
     DocumentUploadResponse:
       type: object
@@ -323,6 +360,14 @@ components:
           type: string
         description:
           type: string
+        media_type:
+          type: string
+          enum: [text, image, video, audio]
+          description: Type of media content (default: text)
+        media_url:
+          type: string
+          format: uri
+          description: URL to the stored media file (for images/videos)
         status:
           type: string
           enum: [indexed, processing, failed]

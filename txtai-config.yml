@@ -1,7 +1,7 @@
 # txtai configuration
 # See: https://neuml.github.io/txtai/api/configuration/
 
-# Embeddings configuration
+# Text embeddings configuration (vector search for text)
 embeddings:
   # Use a lightweight model for local deployment
   path: sentence-transformers/all-MiniLM-L6-v2
@@ -10,10 +10,52 @@ embeddings:
   # Backend configuration
   backend: faiss
 
+# Multimodal embeddings configuration (for images and videos)
+# Uses CLIP model that can handle both text and images
+multimodal:
+  path: sentence-transformers/clip-ViT-B-32
+  content: true
+  backend: faiss
+
+# BM25 configuration (keyword search)
+# BM25 is a keyword-based search algorithm
+# This enables hybrid search (vector + keyword)
+bm25:
+  # BM25 parameters
+  k1: 1.2
+  b: 0.75
+
+# Hybrid search pipeline (for text)
+# Combines vector search (embeddings) and keyword search (bm25)
+hybrid:
+  # Use embeddings for vector search
+  embeddings: embeddings
+  # Use bm25 for keyword search
+  bm25: bm25
+  # Weight for combining results (0.0 = keyword only, 1.0 = vector only, 0.5 = balanced)
+  weights: [0.5, 0.5]
+
+# Image processing pipeline
+images:
+  path: sentence-transformers/clip-ViT-B-32
+  content: true
+
+# Video processing pipeline (extracts frames and processes them)
+workflow:
+  video-process:
+    tasks:
+      - action: video/frames
+        frames: 10
+        # Extract 10 frames per video
+      - action: images
+        # Process each frame as an image
+
 # API configuration
 api:
   # Enable all endpoints
   embeddings: true
+  # Enable image endpoints
+  images: true
   # CORS configuration
   cors:
     origins:

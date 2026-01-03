@@ -7,7 +7,9 @@
 import { config } from '../config.js';
 import { txtaiService } from '../services/txtai-service.js';
 import { documentStore } from '../services/document-store.js';
-import type { components } from '../../libs/contracts-ts/generated/knowledge-provider.js';
+// Import types from generated contract
+// Following contract-first pattern: contracts are sacred, implementations are disposable
+import type { components } from '@knowledgebase/contracts-ts/generated/knowledge-provider';
 
 // Extract type from contract
 export type HealthResponse = components['schemas']['HealthResponse'] & {

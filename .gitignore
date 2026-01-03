@@ -50,3 +50,11 @@ coverage/
 tmp/
 temp/
 *.tmp
+
+# Data storage (documents and media files)
+data/
+**/data/
+
+# Test tools output
+test-tools/*.log
+test-tools/output/

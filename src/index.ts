@@ -24,21 +24,26 @@ import {
 } from './handlers/search.js';
 import {
   handleUploadDocument,
+  handleUploadFile,
   handleListDocuments,
   handleGetDocument,
   handleDeleteDocument,
   type DocumentUploadRequest,
 } from './handlers/documents.js';
+import { fileStorage } from './services/file-storage.js';
 
 // CORS headers
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Request-ID',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Request-ID, X-User-ID, X-Jurisdiction',
 };
 
-// Check txtai connection on startup
-txtaiService.healthCheck().then((healthy) => {
+// Initialize storage and check txtai connection on startup
+Promise.all([
+  fileStorage.initialize(),
+  txtaiService.healthCheck(),
+]).then(([, healthy]) => {
   if (healthy) {
     logger.info('txtai service is available', { url: config.txtai.url });
   } else {
@@ -46,13 +51,34 @@ txtaiService.healthCheck().then((healthy) => {
   }
 });
 
+// Helper function to get MIME type from filename
+function getMimeType(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  const mimeTypes: Record<string, string> = {
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    mp4: 'video/mp4',
+    avi: 'video/x-msvideo',
+    mov: 'video/quicktime',
+    pdf: 'application/pdf',
+    txt: 'text/plain',
+  };
+  return mimeTypes[ext || ''] || 'application/octet-stream';
+}
+
 const server = Bun.serve({
   port: config.port,
   hostname: config.host,
 
   async fetch(req) {
     const url = new URL(req.url);
+    // Extract required headers (following contract-first pattern)
     const requestId = req.headers.get('x-request-id') || `req_${Date.now()}`;
+    const userId = req.headers.get('x-user-id');
+    const jurisdiction = req.headers.get('x-jurisdiction');
 
     // Handle CORS preflight
     if (req.method === 'OPTIONS') {
@@ -83,22 +109,91 @@ const server = Bun.serve({
         return Response.json(response, { headers: corsHeaders });
       }
 
-      // Upload document
+      // Upload document (supports both JSON and multipart/form-data)
       if (req.method === 'POST' && url.pathname === '/documents') {
-        const body = (await req.json()) as DocumentUploadRequest;
+        const contentType = req.headers.get('content-type') || '';
 
-        // Validate required fields
-        if (!body.title || !body.content) {
-          const error: ErrorResponse = {
-            error: 'Missing required fields: title and content',
-            code: 'INVALID_REQUEST',
-          };
-          return Response.json(error, { status: 400, headers: corsHeaders });
+        // Check if it's a file upload (multipart/form-data)
+        if (contentType.includes('multipart/form-data')) {
+          try {
+            const formData = await req.formData();
+            const response = await handleUploadFile(formData);
+            const status = response.status === 'failed' ? 500 : 200;
+            return Response.json(response, { status, headers: corsHeaders });
+          } catch (error) {
+            logger.error('File upload error', {
+              error: error instanceof Error ? error.message : 'Unknown',
+              stack: error instanceof Error ? error.stack : undefined,
+            });
+            const errorResponse: ErrorResponse = {
+              error: error instanceof Error ? error.message : 'File upload failed',
+              code: 'UPLOAD_ERROR',
+            };
+            return Response.json(errorResponse, { status: 500, headers: corsHeaders });
+          }
+        } else {
+          // Regular JSON upload
+          try {
+            const body = (await req.json()) as DocumentUploadRequest;
+
+            // Validate required fields
+            if (!body.title || !body.content) {
+              const error: ErrorResponse = {
+                error: 'Missing required fields: title and content',
+                code: 'INVALID_REQUEST',
+              };
+              return Response.json(error, { status: 400, headers: corsHeaders });
+            }
+
+            const response = await handleUploadDocument(body);
+            const status = response.status === 'failed' ? 500 : 200;
+            return Response.json(response, { status, headers: corsHeaders });
+          } catch (error) {
+            logger.error('JSON upload error', {
+              error: error instanceof Error ? error.message : 'Unknown',
+            });
+            const errorResponse: ErrorResponse = {
+              error: error instanceof Error ? error.message : 'Invalid JSON',
+              code: 'INVALID_REQUEST',
+            };
+            return Response.json(errorResponse, { status: 400, headers: corsHeaders });
+          }
+        }
+      }
+
+      // Serve media files
+      if (req.method === 'GET' && url.pathname.startsWith('/media/')) {
+        const pathParts = url.pathname.split('/media/')[1];
+        if (!pathParts) {
+          return new Response('Not Found', { status: 404, headers: corsHeaders });
         }
 
-        const response = await handleUploadDocument(body);
-        const status = response.status === 'failed' ? 500 : 200;
-        return Response.json(response, { status, headers: corsHeaders });
+        const [documentId, ...filenameParts] = pathParts.split('/');
+        const filename = filenameParts.join('/');
+
+        if (!documentId || !filename) {
+          return new Response('Not Found', { status: 404, headers: corsHeaders });
+        }
+
+        try {
+          const fileBuffer = await fileStorage.readFile(documentId, filename);
+          const mimeType = getMimeType(filename);
+          
+          return new Response(fileBuffer, {
+            headers: {
+              ...corsHeaders,
+              'Content-Type': mimeType,
+              'Content-Length': fileBuffer.length.toString(),
+            },
+          });
+        } catch (error) {
+          logger.error('Failed to serve media file', {
+            documentId,
+            filename,
+            error: error instanceof Error ? error.message : 'Unknown',
+          });
+          return new Response('Not Found', { status: 404, headers: corsHeaders });
+        }
       }
 
       // List documents
@@ -176,6 +271,8 @@ const server = Bun.serve({
       logger.error('Request failed', {
         error: error instanceof Error ? error.message : 'Unknown',
         requestId,
+        userId,
+        jurisdiction,
         path: url.pathname,
         method: req.method,
       });

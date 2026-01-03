@@ -16,6 +16,8 @@ export interface StoredDocument {
   chunks_count: number;
   created_at: string;
   updated_at: string;
+  media_type?: 'text' | 'image' | 'video' | 'audio';
+  media_url?: string;
   metadata?: Record<string, unknown>;
 }
 

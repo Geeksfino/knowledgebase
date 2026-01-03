@@ -10,7 +10,10 @@
     "declaration": true,
     "outDir": "dist",
     "rootDir": "src",
-    "types": ["bun-types"]
+    "types": ["bun-types"],
+    "paths": {
+      "@knowledgebase/contracts-ts/*": ["./libs/contracts-ts/*"]
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
