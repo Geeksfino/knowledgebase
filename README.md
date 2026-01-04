@@ -229,21 +229,23 @@ knowledgebase/
 │   │   ├── txtai-service.ts
 │   │   ├── document-processor.ts
 │   │   ├── document-store.ts
+│   │   ├── query-processor.ts
 │   │   ├── media-processor.ts
 │   │   └── file-storage.ts
 │   └── utils/                 # 工具函数
 │       ├── logger.ts
-│       └── token-counter.ts
+│       ├── token-counter.ts
+│       └── mime-types.ts
 ├── docs/                      # 文档目录
 │   ├── README.md              # 文档索引
+│   ├── architecture.md        # 架构概述
 │   ├── environment-configuration.md
+│   ├── file-organization.md
 │   ├── feature-summary.md
-│   └── ...                    # 更多文档
-├── scripts/                   # 脚本目录
-│   ├── README.md              # 脚本说明
-│   ├── validate-service.sh
-│   ├── test-complete.sh
-│   └── ...                    # 更多脚本
+│   ├── testing-guide.md
+│   ├── multimodal-testing.md
+│   ├── api-reference.md
+│   └── validation.md
 ├── test-tools/                # 测试工具
 │   └── mock-txtai.ts
 ├── docker-compose.yml         # Docker 编排
@@ -377,32 +379,29 @@ npm run validate
 
 详细测试指南请参考：[多模态测试文档](docs/multimodal-testing.md)
 
-## 文档和脚本
-
-### 文档目录 (`docs/`)
+## 文档
 
 项目文档位于 `docs/` 目录，包含完整的功能说明、测试指南和配置文档。
 
-**快速导航**：
-- 📚 [文档索引](docs/README.md) - 所有文档的完整索引和分类
-- ⚙️ [环境配置指南](docs/environment-configuration.md) - 环境变量配置和生产部署
-- 🧪 [测试指南](docs/testing-guide.md) - 测试流程和最佳实践
-- 📋 [文件组织说明](docs/file-organization.md) - 项目文件结构说明
+### 快速导航
 
-**完整文档列表**：查看 [docs/README.md](docs/README.md)
+| 文档 | 描述 |
+|------|------|
+| 📚 [文档索引](docs/README.md) | 所有文档的完整索引和分类 |
+| 🏗️ [架构概述](docs/architecture.md) | 服务架构和组件说明 |
+| ⚙️ [环境配置指南](docs/environment-configuration.md) | 环境变量配置和生产部署 |
+| 📋 [文件组织说明](docs/file-organization.md) | 项目文件结构说明 |
+| 📖 [功能概述](docs/feature-summary.md) | 核心功能和使用说明 |
+| 🧪 [测试指南](docs/testing-guide.md) | 测试流程和最佳实践 |
+| 🎬 [多模态测试](docs/multimodal-testing.md) | 图片和视频搜索功能测试 |
+| 📡 [API 参考](docs/api-reference.md) | 完整的 API 端点文档 |
+| ✅ [验证文档](docs/validation.md) | 服务验证和契约合规性检查 |
 
-### 脚本目录 (`scripts/`)
+### 脚本
 
-测试和工具脚本位于 `scripts/` 目录，用于服务验证、测试和类型生成。
+测试和工具脚本位于 `scripts/` 目录：
 
-**常用脚本**：
-- `validate-service.sh` - 全面的服务验证（推荐用于部署前检查）
-- `restart-and-test.sh` - 重启服务并运行基本测试
-- `test-complete.sh` - 完整的多模态功能测试
-- `test-multimodal-search.sh` - 多模态搜索验证
-- `generate-contracts.sh` - 生成 TypeScript 类型定义
-
-**完整脚本说明**：查看 [scripts/README.md](scripts/README.md)
+- `generate-contracts.sh` - 从 OpenAPI 契约生成 TypeScript 类型定义
 
 ## 许可证
 

@@ -1,20 +1,30 @@
 /**
  * Knowledge Base Provider Service
- * 
- * External knowledge base provider using txtai for RAG.
- * Implements standard Provider interface for integration with chatkit-middleware.
- * 
- * API Endpoints (based on OpenAPI contract):
- * - GET  /provider/health     - Health check
- * - POST /provider/search     - Search knowledge base
- * - POST /documents           - Upload document
- * - GET  /documents           - List documents
- * - GET  /documents/:id       - Get document
- * - DELETE /documents/:id     - Delete document
+ *
+ * 外部知识库 Provider 服务，基于 txtai 实现向量检索和混合搜索。
+ * 实现标准 Knowledge Provider 接口，用于与 chatkit-middleware 的 Context Assembly 集成。
+ *
+ * ## 主要功能
+ * - 混合搜索（向量 + BM25 关键词）
+ * - 多模态支持（文本、图片、视频、PDF/Word文档）
+ * - 智能查询处理（LLM 查询扩展和重写）
+ * - 文档分块和索引管理
+ *
+ * ## API 端点 (基于 OpenAPI 契约)
+ * - GET  /provider/health     - 健康检查
+ * - POST /provider/search     - 搜索知识库
+ * - POST /documents           - 上传文档（支持 JSON 和文件上传）
+ * - GET  /documents           - 列出文档
+ * - GET  /documents/:id       - 获取文档详情
+ * - DELETE /documents/:id     - 删除文档
+ * - GET  /media/:docId/:file  - 获取媒体文件
+ *
+ * @module knowledgebase
  */
 
 import { config } from './config.js';
 import { logger } from './utils/logger.js';
+import { getMimeType } from './utils/mime-types.js';
 import { txtaiService } from './services/txtai-service.js';
 import { handleHealthCheck } from './handlers/health.js';
 import {
@@ -32,14 +42,21 @@ import {
 } from './handlers/documents.js';
 import { fileStorage } from './services/file-storage.js';
 
-// CORS headers
+/**
+ * CORS 响应头配置
+ * 允许跨域访问，支持必要的请求头
+ */
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Request-ID, X-User-ID, X-Jurisdiction',
 };
 
-// Initialize storage and check txtai connection on startup
+/**
+ * 服务启动初始化
+ * - 初始化文件存储目录
+ * - 检查 txtai 服务连接状态
+ */
 Promise.all([
   fileStorage.initialize(),
   txtaiService.healthCheck(),
@@ -47,27 +64,11 @@ Promise.all([
   if (healthy) {
     logger.info('txtai service is available', { url: config.txtai.url });
   } else {
-    logger.warn('txtai service is not available', { url: config.txtai.url });
+    logger.warn('txtai service is not available - search functionality may be limited', {
+      url: config.txtai.url,
+    });
   }
 });
-
-// Helper function to get MIME type from filename
-function getMimeType(filename: string): string {
-  const ext = filename.split('.').pop()?.toLowerCase();
-  const mimeTypes: Record<string, string> = {
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    png: 'image/png',
-    gif: 'image/gif',
-    webp: 'image/webp',
-    mp4: 'video/mp4',
-    avi: 'video/x-msvideo',
-    mov: 'video/quicktime',
-    pdf: 'application/pdf',
-    txt: 'text/plain',
-  };
-  return mimeTypes[ext || ''] || 'application/octet-stream';
-}
 
 const server = Bun.serve({
   port: config.port,

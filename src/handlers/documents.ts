@@ -1,10 +1,23 @@
 /**
  * Documents Handler
- * 
- * Handles document management (upload, list, get, delete).
+ *
+ * 文档管理处理器，负责：
+ * - 文档上传（JSON 文本和文件上传）
+ * - 文档列表查询
+ * - 文档详情获取
+ * - 文档删除（包括索引和媒体文件清理）
+ *
+ * 支持的文件类型：
+ * - 文本：直接 JSON 上传
+ * - 图片：jpg, png, gif, webp
+ * - 视频：mp4, avi, mov
+ * - 文档：pdf, doc, docx
+ *
+ * @module handlers/documents
  */
 
 import { logger } from '../utils/logger.js';
+import { getMimeType } from '../utils/mime-types.js';
 import { txtaiService } from '../services/txtai-service.js';
 import { documentProcessor } from '../services/document-processor.js';
 import { documentStore, type StoredDocument } from '../services/document-store.js';
@@ -174,22 +187,10 @@ export async function handleUploadFile(
       throw new Error('Missing or invalid file field');
     }
 
-    // Detect MIME type from filename if not provided
+    // Detect MIME type from filename if not provided or is generic
     let mimeType = file.type;
     if (!mimeType || mimeType === 'application/octet-stream') {
-      // Try to detect from file extension
-      const ext = file.name.split('.').pop()?.toLowerCase();
-      const mimeTypes: Record<string, string> = {
-        jpg: 'image/jpeg',
-        jpeg: 'image/jpeg',
-        png: 'image/png',
-        gif: 'image/gif',
-        webp: 'image/webp',
-        mp4: 'video/mp4',
-        avi: 'video/x-msvideo',
-        mov: 'video/quicktime',
-      };
-      mimeType = mimeTypes[ext || ''] || 'application/octet-stream';
+      mimeType = getMimeType(file.name);
     }
 
     logger.info('File info', {
@@ -223,7 +224,7 @@ export async function handleUploadFile(
     };
 
     if (!mediaProcessor.isSupportedFileType(mediaFile.mimeType)) {
-      throw new Error(`Unsupported file type: ${mediaFile.mimeType}. Supported types: images (jpg, png, gif, webp), videos (mp4, avi, mov)`);
+      throw new Error(`Unsupported file type: ${mediaFile.mimeType}. Supported types: images (jpg, png, gif, webp), videos (mp4, avi, mov), documents (pdf, doc, docx), audio files, and text files`);
     }
 
     // Check file size

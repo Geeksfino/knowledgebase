@@ -17,7 +17,8 @@
   },
   "dependencies": {
     "pdf-parse": "^1.1.1",
-    "marked": "^11.1.1"
+    "marked": "^11.1.1",
+    "mammoth": "^1.6.0"
   },
   "imports": {
     "@knowledgebase/contracts-ts/*": "./libs/contracts-ts/*"

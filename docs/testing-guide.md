@@ -1,29 +1,44 @@
-# Knowledge Base 服务测试指南
+# 测试指南
 
-本文档说明如何测试 knowledgebase 服务的各项功能。
+本文档说明如何测试 Knowledge Base Provider 服务。
 
-## 快速开始
+## 环境准备
 
 ### 1. 启动服务
 
+**使用真实 txtai（推荐）：**
 ```bash
-# 方式 1: 使用 Docker Compose（推荐）
-docker-compose up -d
+# 启动 txtai
+docker run -d -p 8000:8000 neuml/txtai-api
 
-# 方式 2: 本地开发
-# 首先启动 txtai 服务（如果使用 mock，可以跳过）
-# 然后启动 knowledgebase
+# 启动服务
 bun run dev
 ```
 
-### 2. 验证服务是否运行
-
+**使用 Mock txtai（无需真实服务）：**
 ```bash
-# 检查健康状态
-curl http://localhost:8080/provider/health | jq .
+# 启动 mock 服务
+bun run mock-txtai
+
+# 在另一个终端启动主服务
+bun run dev
 ```
 
-预期响应：
+### 2. 使用 Docker Compose
+
+```bash
+docker-compose up -d
+```
+
+## 基础测试
+
+### 健康检查
+
+```bash
+curl http://localhost:8080/provider/health
+```
+
+**期望响应：**
 ```json
 {
   "status": "healthy",
@@ -31,58 +46,53 @@ curl http://localhost:8080/provider/health | jq .
   "txtai": {
     "available": true,
     "url": "http://localhost:8000"
+  },
+  "documents": {
+    "count": 0
   }
 }
 ```
 
-## 自动化测试
-
-### 运行完整验证脚本
+### 根端点
 
 ```bash
-# 运行综合验证（推荐）
-npm run validate
-
-# 或直接运行脚本
-./scripts/validate-service.sh
+curl http://localhost:8080/
 ```
 
-验证脚本会测试：
-- ✅ 健康检查
-- ✅ 契约合规性
-- ✅ 文档管理（上传、列表、获取、删除）
-- ✅ 搜索功能
-- ✅ 错误处理
-
-### 运行类型验证
-
-```bash
-npm run validate-types
+**期望响应：**
+```json
+{
+  "name": "Knowledge Base Provider",
+  "version": "1.0.0",
+  "provider_name": "customer_kb",
+  "endpoints": {
+    "health": "GET /provider/health",
+    "search": "POST /provider/search",
+    "documents": {
+      "list": "GET /documents",
+      "upload": "POST /documents",
+      "get": "GET /documents/:id",
+      "delete": "DELETE /documents/:id"
+    }
+  }
+}
 ```
 
-验证生成的 TypeScript 类型是否正确。
+## 文档管理测试
 
-## 手动测试
-
-### 测试 1: 健康检查
-
-```bash
-curl http://localhost:8080/provider/health | jq .
-```
-
-### 测试 2: 上传文档
+### 上传文本文档
 
 ```bash
 curl -X POST http://localhost:8080/documents \
   -H "Content-Type: application/json" \
   -d '{
     "title": "测试文档",
-    "content": "这是测试文档的内容，用于验证知识库服务。",
+    "content": "这是一个测试文档的内容，用于验证文档上传功能。",
     "category": "test"
-  }' | jq .
+  }'
 ```
 
-预期响应：
+**期望响应：**
 ```json
 {
   "document_id": "doc_xxx",
@@ -92,25 +102,50 @@ curl -X POST http://localhost:8080/documents \
 }
 ```
 
-### 测试 3: 列出文档
+### 上传文件
 
 ```bash
-curl http://localhost:8080/documents | jq .
+# 创建测试文件
+echo "这是测试文件内容" > test.txt
+
+# 上传
+curl -X POST http://localhost:8080/documents \
+  -F "title=测试文件" \
+  -F "file=@test.txt"
 ```
 
-或带分页参数：
+### 列出文档
+
 ```bash
-curl "http://localhost:8080/documents?limit=10&offset=0" | jq .
+curl http://localhost:8080/documents
 ```
 
-### 测试 4: 获取文档详情
+### 获取文档详情
 
 ```bash
-# 替换 {document_id} 为实际的文档 ID
-curl http://localhost:8080/documents/{document_id} | jq .
+curl http://localhost:8080/documents/{document_id}
 ```
 
-### 测试 5: 搜索知识库
+### 删除文档
+
+```bash
+curl -X DELETE http://localhost:8080/documents/{document_id}
+```
+
+## 搜索测试
+
+### 基础搜索
+
+```bash
+curl -X POST http://localhost:8080/provider/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "test-user",
+    "query": "测试"
+  }'
+```
+
+### 带限制的搜索
 
 ```bash
 curl -X POST http://localhost:8080/provider/search \
@@ -118,233 +153,172 @@ curl -X POST http://localhost:8080/provider/search \
   -d '{
     "user_id": "test-user",
     "query": "测试",
-    "limit": 5
-  }' | jq .
+    "limit": 3
+  }'
 ```
 
-预期响应：
-```json
-{
-  "provider_name": "customer_kb",
-  "chunks": [
-    {
-      "chunk_id": "doc_xxx_chunk_0",
-      "content": "...",
-      "score": 0.95,
-      "document_id": "doc_xxx",
-      "document_title": "测试文档"
-    }
-  ],
-  "total_tokens": 50
-}
-```
-
-### 测试 6: 错误处理
+### 带 Token 预算的搜索
 
 ```bash
-# 测试无效请求
 curl -X POST http://localhost:8080/provider/search \
-  -H "Content-Type: application/json" \
-  -d '{"invalid": "request"}' | jq .
-```
-
-预期响应（400）：
-```json
-{
-  "error": "Missing required fields: user_id and query",
-  "code": "INVALID_REQUEST"
-}
-```
-
-### 测试 7: 删除文档
-
-```bash
-# 替换 {document_id} 为实际的文档 ID
-curl -X DELETE http://localhost:8080/documents/{document_id} | jq .
-```
-
-## 完整测试流程示例
-
-```bash
-# 1. 检查服务状态
-echo "=== 1. 健康检查 ==="
-curl -s http://localhost:8080/provider/health | jq .
-
-# 2. 上传测试文档
-echo -e "\n=== 2. 上传文档 ==="
-DOC_ID=$(curl -s -X POST http://localhost:8080/documents \
-  -H "Content-Type: application/json" \
-  -d '{
-    "title": "API 测试文档",
-    "content": "这是用于 API 测试的文档内容。",
-    "category": "test"
-  }' | jq -r '.document_id')
-echo "文档 ID: $DOC_ID"
-
-# 3. 等待索引完成
-echo -e "\n=== 3. 等待索引（2秒）==="
-sleep 2
-
-# 4. 搜索文档
-echo -e "\n=== 4. 搜索文档 ==="
-curl -s -X POST http://localhost:8080/provider/search \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": "test-user",
-    "query": "API 测试",
-    "limit": 5
-  }' | jq '{chunks_count: (.chunks | length), first_chunk: .chunks[0]}'
-
-# 5. 获取文档详情
-echo -e "\n=== 5. 获取文档详情 ==="
-curl -s http://localhost:8080/documents/$DOC_ID | jq '{document_id, title, status, chunks_count}'
-
-# 6. 列出所有文档
-echo -e "\n=== 6. 列出文档 ==="
-curl -s http://localhost:8080/documents | jq '{total, documents: [.documents[] | {document_id, title, status}]}'
-
-# 7. 删除文档
-echo -e "\n=== 7. 删除文档 ==="
-curl -s -X DELETE http://localhost:8080/documents/$DOC_ID | jq .
-```
-
-## 使用 jq 进行高级查询
-
-### 查看搜索结果的详细信息
-
-```bash
-curl -s -X POST http://localhost:8080/provider/search \
-  -H "Content-Type: application/json" \
-  -d '{"user_id":"test","query":"测试","limit":5}' | \
-  jq '{
-    provider: .provider_name,
-    total_chunks: (.chunks | length),
-    total_tokens: .total_tokens,
-    chunks: [.chunks[] | {
-      id: .chunk_id,
-      content: .content[:50],
-      score: .score,
-      document: .document_title
-    }]
+    "query": "测试",
+    "limit": 10,
+    "token_budget": 500
   }'
 ```
 
-### 查看文档统计
+## 完整测试流程
+
+### 端到端测试脚本
 
 ```bash
-curl -s http://localhost:8080/documents | \
-  jq '{
-    total: .total,
-    indexed: [.documents[] | select(.status == "indexed")] | length,
-    processing: [.documents[] | select(.status == "processing")] | length,
-    failed: [.documents[] | select(.status == "failed")] | length
-  }'
-```
+#!/bin/bash
 
-## 集成测试
+BASE_URL="http://localhost:8080"
 
-### 测试与 chatkit-middleware 的集成
+echo "=== 1. 健康检查 ==="
+curl -s $BASE_URL/provider/health | jq .
 
-```bash
-# 确保 knowledgebase 服务运行在 http://localhost:8080
-# 然后在 chatkit-middleware 中测试
-
-# 测试 orchestrator 调用 knowledgebase
-curl -X POST http://localhost:26102/flows/inbound/execute \
+echo -e "\n=== 2. 上传文档 ==="
+DOC_RESPONSE=$(curl -s -X POST $BASE_URL/documents \
   -H "Content-Type: application/json" \
-  -H "X-User-ID: test-user" \
-  -H "X-Request-ID: test-123" \
-  -H "X-Jurisdiction: US" \
   -d '{
-    "message": "测试知识库检索",
-    "query": "测试知识库检索"
+    "title": "产品介绍",
+    "content": "我们的产品具有以下特点：高性能、易使用、可扩展。支持多种部署方式。",
+    "category": "product"
+  }')
+echo $DOC_RESPONSE | jq .
+DOC_ID=$(echo $DOC_RESPONSE | jq -r '.document_id')
+
+echo -e "\n=== 3. 列出文档 ==="
+curl -s $BASE_URL/documents | jq .
+
+echo -e "\n=== 4. 获取文档详情 ==="
+curl -s $BASE_URL/documents/$DOC_ID | jq .
+
+echo -e "\n=== 5. 搜索文档 ==="
+curl -s -X POST $BASE_URL/provider/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "test-user",
+    "query": "产品特点"
   }' | jq .
+
+echo -e "\n=== 6. 删除文档 ==="
+curl -s -X DELETE $BASE_URL/documents/$DOC_ID | jq .
+
+echo -e "\n=== 7. 确认删除 ==="
+curl -s $BASE_URL/documents | jq .
+
+echo -e "\n=== 测试完成 ==="
 ```
+
+## 错误场景测试
+
+### 缺少必填字段
+
+```bash
+# 缺少 query
+curl -X POST http://localhost:8080/provider/search \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "test"}'
+```
+
+**期望：** 400 错误，提示缺少字段
+
+### 无效 JSON
+
+```bash
+curl -X POST http://localhost:8080/documents \
+  -H "Content-Type: application/json" \
+  -d 'invalid json'
+```
+
+**期望：** 400 错误
+
+### 不存在的文档
+
+```bash
+curl http://localhost:8080/documents/nonexistent
+```
+
+**期望：** 404 错误
 
 ## 性能测试
 
-### 测试响应时间
+### 批量上传测试
 
 ```bash
-# 健康检查响应时间
-time curl -s http://localhost:8080/provider/health > /dev/null
+for i in {1..10}; do
+  curl -s -X POST http://localhost:8080/documents \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"title\": \"测试文档 $i\",
+      \"content\": \"这是第 $i 个测试文档的内容。\",
+      \"category\": \"batch-test\"
+    }"
+done
+```
 
-# 搜索响应时间
+### 搜索响应时间
+
+```bash
 time curl -s -X POST http://localhost:8080/provider/search \
   -H "Content-Type: application/json" \
-  -d '{"user_id":"test","query":"测试","limit":5}' > /dev/null
+  -d '{
+    "user_id": "test",
+    "query": "测试",
+    "limit": 10
+  }' > /dev/null
 ```
 
-### 并发测试
+## 调试技巧
+
+### 启用 Debug 日志
 
 ```bash
-# 使用 Apache Bench 测试并发
-ab -n 100 -c 10 -p search.json -T application/json \
-  http://localhost:8080/provider/search
+DEBUG=true bun run dev
 ```
 
-## 常见问题排查
-
-### 问题 1: 服务无法访问
+### 查看服务日志
 
 ```bash
-# 检查服务是否运行
-curl http://localhost:8080/provider/health
+# Docker 环境
+docker-compose logs -f knowledgebase
 
-# 检查端口是否被占用
-lsof -i :8080
-
-# 查看服务日志
-docker-compose logs knowledgebase
-# 或
-# 如果本地运行，查看终端输出
+# 本地环境
+tail -f logs/knowledgebase.log
 ```
 
-### 问题 2: txtai 服务不可用
+### 检查 txtai 状态
 
 ```bash
-# 检查 txtai 服务
-curl http://localhost:8000
-
-# 如果使用 Docker，检查容器状态
-docker ps | grep txtai
-
-# 重启 txtai 服务
-docker-compose restart txtai
+curl http://localhost:8000/
 ```
 
-### 问题 3: 搜索返回空结果
+## 常见问题
 
-```bash
-# 检查是否有文档
-curl http://localhost:8080/documents | jq '.total'
+### txtai 连接失败
 
-# 等待索引完成（通常需要几秒钟）
-sleep 5
+检查：
+1. txtai 服务是否运行
+2. 网络连接是否正常
+3. `TXTAI_URL` 配置是否正确
 
-# 重新搜索
-curl -X POST http://localhost:8080/provider/search \
-  -H "Content-Type: application/json" \
-  -d '{"user_id":"test","query":"测试","limit":5}' | jq .
-```
+### 搜索无结果
 
-## 测试检查清单
+检查：
+1. 是否有文档已索引
+2. 查询是否与内容相关
+3. `MIN_SEARCH_SCORE` 是否设置过高
 
-- [ ] 服务可以正常启动
-- [ ] 健康检查返回 healthy
-- [ ] 可以上传文档
-- [ ] 文档可以正确索引
-- [ ] 可以搜索到上传的文档
-- [ ] 搜索结果包含正确的字段
-- [ ] 错误处理返回正确的错误格式
-- [ ] 文档列表功能正常
-- [ ] 可以获取文档详情
-- [ ] 可以删除文档
-- [ ] 类型验证通过
+### 文件上传失败
 
-## 相关文档
-
-- [验证文档](./validation.md) - 详细的验证指南
-- [README.md](../README.md) - 服务概述和配置
-- [contracts/knowledge-provider.yaml](../contracts/knowledge-provider.yaml) - API 契约
+检查：
+1. 文件大小是否超过限制
+2. 文件类型是否支持
+3. 存储目录权限是否正确
 

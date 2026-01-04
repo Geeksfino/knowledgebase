@@ -71,7 +71,12 @@ paths:
       description: |
         Upload a document for indexing into the knowledge base.
         Supports both text content (JSON) and file uploads (multipart/form-data).
-        Supported file types: images (jpg, png, gif, webp), videos (mp4, avi, mov), and text files.
+        Supported file types: 
+        - Images: jpg, png, gif, webp
+        - Videos: mp4, avi, mov
+        - Documents: pdf, doc, docx
+        - Audio files: all audio/* MIME types
+        - Text files: all text/* MIME types
       requestBody:
         required: true
         content:

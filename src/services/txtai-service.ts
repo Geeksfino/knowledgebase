@@ -87,10 +87,15 @@ export class TxtaiService {
   /**
    * Hybrid search: combines vector search and keyword search (BM25)
    * This provides better results by combining semantic similarity with keyword matching
+   * 
+   * @param query - Search query
+   * @param limit - Maximum number of results
+   * @param weights - Optional weights for [vector, bm25]. Default from config.
    */
   async hybridSearch(
     query: string,
-    limit: number = 5
+    limit: number = 5,
+    weights?: [number, number]
   ): Promise<TxtaiSearchResult[]> {
     try {
       const headers: Record<string, string> = {
@@ -100,6 +105,9 @@ export class TxtaiService {
       if (this.apiKey) {
         headers['Authorization'] = `Bearer ${this.apiKey}`;
       }
+
+      // Use configured weights or provided weights
+      const searchWeights = weights || config.search.hybridWeights as [number, number];
 
       // Try hybrid search endpoint first (if configured in txtai)
       // Fallback to vector search if hybrid is not available
@@ -111,6 +119,7 @@ export class TxtaiService {
           body: JSON.stringify({
             query,
             limit,
+            weights: searchWeights, // Pass weights to txtai for dynamic adjustment
           }),
           signal: AbortSignal.timeout(this.timeout),
         });

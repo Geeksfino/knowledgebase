@@ -118,6 +118,16 @@ export class DocumentProcessor {
         chunks.push(chunk);
       });
     }
+    // For documents, chunk the extracted text
+    else if (processedMedia.mediaType === 'document') {
+      const documentChunks = this.chunkText(
+        processedMedia.text,
+        documentId,
+        title,
+        metadata
+      );
+      chunks.push(...documentChunks);
+    }
     // For other media types, create a single chunk
     else {
       const chunk: DocumentChunk = {

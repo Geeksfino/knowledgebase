@@ -1,10 +1,17 @@
 /**
  * File Storage Service
- * 
- * Handles storage and retrieval of uploaded media files.
+ *
+ * 文件存储服务，处理上传媒体文件的存储和检索。
+ * 提供以下功能：
+ * - 文件保存（按文档 ID 组织目录）
+ * - 文件读取
+ * - 文件删除（支持单文件和整个文档目录）
+ * - 文件存在性检查
+ *
+ * @module services/file-storage
  */
 
-import { mkdir, writeFile, readFile, unlink, stat } from 'fs/promises';
+import { mkdir, writeFile, readFile, unlink, stat, readdir, rmdir } from 'fs/promises';
 import { join } from 'path';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
@@ -112,18 +119,47 @@ export class FileStorage {
   }
 
   /**
-   * Delete all files for a document
+   * 递归删除目录及其所有内容
+   *
+   * @param dirPath - 要删除的目录路径
+   */
+  private async removeDirectoryRecursive(dirPath: string): Promise<void> {
+    try {
+      const entries = await readdir(dirPath, { withFileTypes: true });
+
+      // 先删除所有子文件和子目录
+      for (const entry of entries) {
+        const fullPath = join(dirPath, entry.name);
+        if (entry.isDirectory()) {
+          await this.removeDirectoryRecursive(fullPath);
+        } else {
+          await unlink(fullPath);
+        }
+      }
+
+      // 删除空目录
+      await rmdir(dirPath);
+    } catch (error) {
+      // 如果目录不存在，忽略错误
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * 删除文档的所有相关文件
+   *
+   * @param documentId - 文档 ID
    */
   async deleteDocumentFiles(documentId: string): Promise<void> {
     try {
       const docDir = join(this.mediaPath, documentId);
-      // In a production system, you'd want to recursively delete the directory
-      // For now, we'll just log it
-      logger.info('Document files directory marked for deletion', {
+      await this.removeDirectoryRecursive(docDir);
+      logger.info('Document files deleted', {
         documentId,
         path: docDir,
       });
-      // TODO: Implement recursive directory deletion
     } catch (error) {
       logger.warn('Failed to delete document files', {
         error: error instanceof Error ? error.message : 'Unknown',

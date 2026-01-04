@@ -3,12 +3,17 @@
  * 
  * Handles image and video processing for multimodal search.
  * Supports OCR, feature extraction, and frame extraction.
+ * Also supports document parsing (PDF, DOCX, DOC).
  */
 
 import { logger } from '../utils/logger.js';
 import { config } from '../config.js';
+// @ts-ignore - pdf-parse is CommonJS module
+import pdfParse from 'pdf-parse';
+// @ts-ignore - mammoth is CommonJS module
+import mammoth from 'mammoth';
 
-export type MediaType = 'image' | 'video' | 'audio' | 'text';
+export type MediaType = 'image' | 'video' | 'audio' | 'text' | 'document';
 
 export interface MediaFile {
   filename: string;
@@ -61,6 +66,12 @@ export class MediaProcessor {
     'video/x-msvideo',
   ];
 
+  private supportedDocumentTypes = [
+    'application/pdf', // PDF
+    'application/msword', // DOC (old Word format)
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // DOCX
+  ];
+
   /**
    * Detect media type from file
    */
@@ -73,6 +84,9 @@ export class MediaProcessor {
     }
     if (file.mimeType.startsWith('audio/')) {
       return 'audio';
+    }
+    if (this.supportedDocumentTypes.includes(file.mimeType)) {
+      return 'document';
     }
     return 'text';
   }
@@ -110,6 +124,117 @@ export class MediaProcessor {
       text,
       format: file.mimeType.split('/')[1],
     };
+  }
+
+  /**
+   * Process PDF document
+   */
+  async processPDF(file: MediaFile, title?: string, description?: string): Promise<string> {
+    logger.info('Processing PDF document', {
+      filename: file.filename,
+      size: file.size,
+      title,
+    });
+
+    try {
+      const data = await pdfParse(file.buffer);
+      let text = data.text || '';
+
+      // Add title and description if provided
+      const parts: string[] = [];
+      if (title) parts.push(title);
+      if (description) parts.push(description);
+      if (text.trim()) parts.push(text);
+      
+      return parts.length > 0 ? parts.join('\n\n') : `PDF文档: ${file.filename}`;
+    } catch (error) {
+      logger.error('Failed to parse PDF', {
+        filename: file.filename,
+        error: error instanceof Error ? error.message : 'Unknown',
+      });
+      throw new Error(`Failed to parse PDF: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Process DOCX document
+   */
+  async processDOCX(file: MediaFile, title?: string, description?: string): Promise<string> {
+    logger.info('Processing DOCX document', {
+      filename: file.filename,
+      size: file.size,
+      title,
+    });
+
+    try {
+      const result = await mammoth.extractRawText({ buffer: file.buffer });
+      let text = result.value || '';
+
+      // Add title and description if provided
+      const parts: string[] = [];
+      if (title) parts.push(title);
+      if (description) parts.push(description);
+      if (text.trim()) parts.push(text);
+      
+      return parts.length > 0 ? parts.join('\n\n') : `DOCX文档: ${file.filename}`;
+    } catch (error) {
+      logger.error('Failed to parse DOCX', {
+        filename: file.filename,
+        error: error instanceof Error ? error.message : 'Unknown',
+      });
+      throw new Error(`Failed to parse DOCX: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Process DOC document (old Word format)
+   * Note: DOC format is complex and may require external tools like LibreOffice
+   * For now, we'll provide a basic implementation that may not work for all DOC files
+   */
+  async processDOC(file: MediaFile, title?: string, description?: string): Promise<string> {
+    logger.info('Processing DOC document', {
+      filename: file.filename,
+      size: file.size,
+      title,
+    });
+
+    // DOC format is binary and complex, mammoth doesn't support it
+    // In production, you might want to:
+    // 1. Use LibreOffice command line to convert DOC to DOCX first
+    // 2. Use a specialized DOC parser library
+    // 3. Prompt users to convert DOC to DOCX
+    
+    logger.warn('DOC format parsing is limited. Consider converting to DOCX for better support.', {
+      filename: file.filename,
+    });
+
+    const parts: string[] = [];
+    if (title) parts.push(title);
+    if (description) parts.push(description);
+    parts.push(`DOC文档: ${file.filename} (注意: DOC格式解析支持有限，建议转换为DOCX格式)`);
+    
+    return parts.join('\n\n');
+  }
+
+  /**
+   * Process document file (PDF, DOCX, DOC)
+   */
+  async processDocument(
+    file: MediaFile,
+    title?: string,
+    description?: string
+  ): Promise<string> {
+    const mimeType = file.mimeType;
+
+    if (mimeType === 'application/pdf') {
+      return await this.processPDF(file, title, description);
+    } else if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+      return await this.processDOCX(file, title, description);
+    } else if (mimeType === 'application/msword') {
+      return await this.processDOC(file, title, description);
+    } else {
+      throw new Error(`Unsupported document type: ${mimeType}`);
+    }
   }
 
   /**
@@ -197,6 +322,11 @@ export class MediaProcessor {
         text = audioParts.join('。');
         break;
       
+      case 'document':
+        // Process document files (PDF, DOCX, DOC, PPT)
+        text = await this.processDocument(file, title, description);
+        break;
+      
       default:
         const defaultParts: string[] = [];
         if (title) defaultParts.push(title);
@@ -225,6 +355,7 @@ export class MediaProcessor {
     return (
       this.supportedImageTypes.includes(mimeType) ||
       this.supportedVideoTypes.includes(mimeType) ||
+      this.supportedDocumentTypes.includes(mimeType) ||
       mimeType.startsWith('audio/') ||
       mimeType.startsWith('text/')
     );
