@@ -6,7 +6,6 @@
   "main": "src/index.ts",
   "scripts": {
     "dev": "bun run src/index.ts",
-    "mock-txtai": "bun run test-tools/mock-txtai.ts",
     "start": "bun run src/index.ts",
     "test": "bun test",
     "build": "bun build src/index.ts --outdir dist --target bun",

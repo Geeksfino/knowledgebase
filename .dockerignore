@@ -1,0 +1,48 @@
+# 依赖目录
+node_modules/
+.txtai-env/
+
+# 开发文件
+.env
+.env.local
+*.log
+
+# 测试和文档
+test-tools/
+tests/
+docs/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 临时文件
+*.tmp
+.DS_Store
+Thumbs.db
+
+# 构建输出
+dist/
+build/
+
+# 数据文件（在运行时挂载）
+data/
+logs/
+
+# Bun 锁文件（已在镜像中安装）
+# bun.lock 保留用于安装
+
+# 脚本（生产环境不需要）
+scripts/
+
+# 示例和测试数据
+test-data/
+*.test.ts
+*.spec.ts

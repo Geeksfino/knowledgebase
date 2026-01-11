@@ -1,18 +1,18 @@
 /**
- * Knowledge Base Provider 配置模块
+ * Knowledge Base Service 配置模块
  *
  * 集中管理所有服务配置，支持通过环境变量覆盖默认值。
- * 配置分为以下几个部分：
- * - 服务基础配置（端口、主机）
- * - txtai 向量检索服务配置
- * - 文件存储配置
- * - 搜索参数配置
- * - 文档分块配置
- * - Provider 元信息
- * - 查询处理（LLM）配置
+ * 
+ * LLM 配置采用统一方式（与 chatkit-middleware 一致）：
+ *   - LLM_PROVIDER: Provider 类型 (deepseek, openai, anthropic, litellm, custom)
+ *   - LLM_MODEL: 模型名称
+ *   - LLM_API_KEY: API key
+ *   - LLM_BASE_URL: Base URL (可选，有默认值)
  *
  * @module config
  */
+
+import type { ProviderType, LLMConfig } from './services/llm/types.js';
 
 /**
  * 解析整数环境变量，带默认值
@@ -30,6 +30,34 @@ function parseFloatEnv(value: string | undefined, defaultValue: number): number 
   return isNaN(parsed) ? defaultValue : parsed;
 }
 
+// Provider-specific default base URLs
+const PROVIDER_DEFAULT_URLS: Record<string, string> = {
+  deepseek: 'https://api.deepseek.com/v1',
+  openai: 'https://api.openai.com/v1',
+  anthropic: 'https://api.anthropic.com/v1',
+  litellm: 'http://localhost:4000/v1',
+};
+
+/**
+ * 加载 LLM 配置
+ */
+function loadLLMConfig(): LLMConfig {
+  const provider = (process.env.LLM_PROVIDER || 'deepseek').toLowerCase() as ProviderType;
+  const model = process.env.LLM_MODEL || 'deepseek-chat';
+  const apiKey = process.env.LLM_API_KEY || '';
+  const baseUrl = process.env.LLM_BASE_URL || PROVIDER_DEFAULT_URLS[provider] || '';
+
+  return {
+    provider,
+    model,
+    apiKey,
+    baseUrl,
+    timeoutMs: parseIntEnv(process.env.LLM_TIMEOUT_MS, 60000),
+    maxRetries: parseIntEnv(process.env.LLM_MAX_RETRIES, 2),
+    retryDelayMs: parseIntEnv(process.env.LLM_RETRY_DELAY_MS, 1000),
+  };
+}
+
 /**
  * 服务配置对象
  */
@@ -39,6 +67,17 @@ export const config = {
    */
   port: parseIntEnv(process.env.PORT, 8080),
   host: process.env.HOST || '0.0.0.0',
+
+  /**
+   * LLM Provider 配置 (统一配置方式)
+   * 
+   * 环境变量：
+   *   - LLM_PROVIDER: Provider 类型 (deepseek, openai, anthropic, litellm, custom)
+   *   - LLM_MODEL: 模型名称
+   *   - LLM_API_KEY: API key (必需)
+   *   - LLM_BASE_URL: Base URL (可选)
+   */
+  llm: loadLLMConfig(),
 
   /**
    * txtai 向量检索服务配置
@@ -106,24 +145,30 @@ export const config = {
 
   /**
    * 查询处理配置
-   * 支持使用 LLM 进行查询重写和扩展，提高搜索召回率
+   * 使用内置 LLM Provider 进行查询重写和扩展
    */
   queryProcessing: {
-    llm: {
-      /** 是否启用 LLM 查询处理 */
-      enabled: process.env.QUERY_LLM_ENABLED === 'true',
-      /** LLM 服务地址（llm-adapter） */
-      url: process.env.QUERY_LLM_URL || 'http://localhost:26404',
-      /** LLM 请求超时时间（毫秒） */
-      timeout: parseIntEnv(process.env.QUERY_LLM_TIMEOUT, 10000),
-      /** 查询扩展配置 */
-      expansion: {
-        /** 是否启用查询扩展（默认启用，如果 LLM 可用） */
-        enabled: process.env.QUERY_EXPANSION_ENABLED !== 'false',
-        /** 最多生成的查询变体数量 */
-        maxQueries: parseIntEnv(process.env.QUERY_EXPANSION_MAX, 3),
-      },
+    /** 是否启用 LLM 查询处理（默认启用，如果 LLM 可用） */
+    enabled: process.env.QUERY_LLM_ENABLED !== 'false',
+    /** 查询扩展配置 */
+    expansion: {
+      /** 是否启用查询扩展 */
+      enabled: process.env.QUERY_EXPANSION_ENABLED !== 'false',
+      /** 最多生成的查询变体数量 */
+      maxQueries: parseIntEnv(process.env.QUERY_EXPANSION_MAX, 3),
     },
+  },
+
+  /**
+   * Chat 配置
+   */
+  chat: {
+    defaultTemperature: parseFloatEnv(process.env.CHAT_DEFAULT_TEMPERATURE, 0.7),
+    defaultMaxTokens: parseIntEnv(process.env.CHAT_DEFAULT_MAX_TOKENS, 2048),
+    defaultSearchLimit: parseIntEnv(process.env.CHAT_DEFAULT_SEARCH_LIMIT, 5),
+    /** 系统提示词模板 ({context} 会被替换为知识库上下文) */
+    systemPromptTemplate: process.env.CHAT_SYSTEM_PROMPT ||
+      '你是一个知识库助手。请基于以下上下文信息回答用户问题：\n\n{context}\n\n如果上下文信息不足以回答问题，请诚实告知。',
   },
 } as const;
 

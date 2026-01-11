@@ -40,27 +40,68 @@ interface SearchResultMetadata {
 }
 
 /**
+ * 从内容中智能提取标题
+ * 优先级：Markdown 标题 > 第一行有意义的文本
+ */
+function extractTitleFromContent(content: string): string {
+  if (!content) return '未知文档';
+  
+  // 尝试提取 Markdown 标题 (# 标题)
+  const headingMatch = content.match(/^#+\s+(.+?)$/m);
+  if (headingMatch && headingMatch[1]) {
+    return headingMatch[1].trim().substring(0, 50);
+  }
+  
+  // 尝试提取第一行非空文本
+  const firstLine = content.split('\n').find(line => line.trim().length > 0);
+  if (firstLine) {
+    // 移除 Markdown 格式符号
+    const cleanLine = firstLine
+      .replace(/^[#*\->\s]+/, '')  // 移除开头的 #, *, -, > 等
+      .replace(/[*_`~]+/g, '')      // 移除加粗、斜体等标记
+      .trim();
+    
+    if (cleanLine.length > 0) {
+      return cleanLine.substring(0, 50) + (cleanLine.length > 50 ? '...' : '');
+    }
+  }
+  
+  return '未知文档';
+}
+
+/**
  * Handle search request
+ * 
+ * @param request - Search request
+ * @param options - Optional settings
+ * @param options.skipQueryProcessing - Skip LLM query processing (use when already processed by caller)
+ * @param options.preProcessedResult - Pre-processed query result from caller
  */
 export async function handleSearch(
-  request: ProviderSearchRequest
+  request: ProviderSearchRequest,
+  options?: {
+    skipQueryProcessing?: boolean;
+    preProcessedResult?: import('../services/query-processor.js').QueryProcessingResult;
+  }
 ): Promise<ProviderSearchResponse> {
-  // Process query using intelligent query processor (LLM rewriting or rule-based)
-  const queryResult = await queryProcessor.processQuery(request.query);
+  const limit = Math.min(
+    request.limit || config.search.defaultLimit,
+    config.search.maxLimit
+  );
+
+  // Use pre-processed result if provided, otherwise process query
+  const queryResult = options?.preProcessedResult 
+    ?? (options?.skipQueryProcessing 
+      ? { processedQuery: request.query, method: 'original' as const }
+      : await queryProcessor.processQuery(request.query));
   
   logger.info('Search request received', {
     userId: request.user_id,
     originalQuery: request.query.substring(0, 50),
     processedQuery: queryResult.processedQuery.substring(0, 50),
     processingMethod: queryResult.method,
-    limit: request.limit,
+    limit,
   });
-
-  // Validate request
-  const limit = Math.min(
-    request.limit || config.search.defaultLimit,
-    config.search.maxLimit
-  );
 
   try {
     // Advanced: Multi-query fusion strategy
@@ -101,8 +142,13 @@ export async function handleSearch(
       // Type-safe metadata extraction
       const metadata = (result.metadata || {}) as SearchResultMetadata;
 
-      // Try to get title from document store, then from metadata, then fallback
-      const documentTitle = doc?.title || metadata.document_title || 'Unknown';
+      // Try to get title from document store, then from metadata, then extract from content
+      let documentTitle = doc?.title || metadata.document_title;
+      
+      // If no title, try to extract from content (Markdown heading or first line)
+      if (!documentTitle || documentTitle === 'Unknown') {
+        documentTitle = extractTitleFromContent(result.text);
+      }
 
       // Extract media type and URL from metadata or document store
       const mediaType = metadata.media_type || doc?.media_type || 'text';
@@ -168,39 +214,59 @@ export async function handleSearch(
 
 /**
  * Multi-query fusion: Search with multiple query variants and merge results
+ * Uses RRF (Reciprocal Rank Fusion) algorithm for better ranking
  * This improves recall by combining results from different query formulations
  */
 async function multiQuerySearch(
   queries: string[],
   limit: number
 ): Promise<Array<{ id: string; score: number; text: string; metadata?: Record<string, unknown> }>> {
-  // Search with each query variant
-  const allResults: Map<string, {
+  const RRF_K = 60; // Constant for RRF algorithm
+  
+  // Map to store RRF scores and keep track of max semantic score for filtering
+  const rrfResults: Map<string, {
     id: string;
-    score: number;
+    rrfScore: number;
+    maxScore: number;
     text: string;
     metadata?: Record<string, unknown>;
-    queryIndex: number;
   }> = new Map();
 
+  // Search with each query variant
   for (let i = 0; i < queries.length; i++) {
     const query = queries[i];
     try {
       const queryResults = await txtaiService.hybridSearch(query, limit);
       
-      // Merge results: use max score if same chunk appears in multiple queries
-      for (const result of queryResults) {
-        const existing = allResults.get(result.id);
-        if (!existing || result.score > existing.score) {
-          // Boost score slightly for primary query (first one)
-          const adjustedScore = i === 0 ? result.score : result.score * 0.95;
-          allResults.set(result.id, {
-            ...result,
-            score: adjustedScore,
-            queryIndex: i,
+      // Calculate RRF score for each result in the ranked list
+      queryResults.forEach((result, rank) => {
+        // RRF score = 1 / (k + rank + 1)
+        // rank is 0-based index
+        const rrfScore = 1 / (RRF_K + rank + 1);
+        
+        const existing = rrfResults.get(result.id);
+        if (existing) {
+          // Accumulate RRF score
+          existing.rrfScore += rrfScore;
+          // Keep max semantic score for threshold filtering later
+          existing.maxScore = Math.max(existing.maxScore, result.score);
+          
+          // Update metadata if this result has a higher semantic score
+          if (result.score > existing.maxScore) {
+            existing.text = result.text;
+            existing.metadata = result.metadata;
+          }
+        } else {
+          // Initialize new result
+          rrfResults.set(result.id, {
+            id: result.id,
+            rrfScore: rrfScore,
+            maxScore: result.score,
+            text: result.text,
+            metadata: result.metadata,
           });
         }
-      }
+      });
     } catch (error) {
       logger.warn('Query variant search failed', {
         query: query.substring(0, 50),
@@ -210,17 +276,25 @@ async function multiQuerySearch(
     }
   }
 
-  // Sort by score (descending) and return top results
-  const sortedResults = Array.from(allResults.values())
-    .sort((a, b) => b.score - a.score)
+  // Sort by accumulated RRF score (descending)
+  const sortedResults = Array.from(rrfResults.values())
+    .sort((a, b) => b.rrfScore - a.rrfScore)
     .slice(0, limit);
 
-  logger.info('Multi-query fusion completed', {
+  logger.info('Multi-query fusion (RRF) completed', {
     totalQueries: queries.length,
     uniqueResults: sortedResults.length,
-    topScore: sortedResults[0]?.score,
+    topRRFScore: sortedResults[0]?.rrfScore,
   });
 
-  return sortedResults;
+  // Return results mapped back to expected format
+  // Note: We return maxScore as 'score' so that downstream filtering (minScore) works correctly
+  // The order is determined by RRF, but the absolute score value is the semantic similarity
+  return sortedResults.map(item => ({
+    id: item.id,
+    score: item.maxScore,
+    text: item.text,
+    metadata: item.metadata,
+  }));
 }
 

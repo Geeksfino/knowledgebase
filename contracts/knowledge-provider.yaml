@@ -1,110 +1,147 @@
 openapi: 3.0.3
 info:
-  title: Knowledge Base Provider API
-  description: |
-    External knowledge base provider service using txtai for RAG.
-    Implements standard Provider interface for integration with chatkit-middleware.
-  version: 1.0.0
+  title: Knowledge Base Service API
+  description: >
+    独立的知识库问答服务，提供知识库搜索、流式会话、文档管理功能。
+    基于 txtai 实现向量检索，内置 LLM 支持流式输出。
+  version: 2.0.0
   license:
     name: MIT
 
 servers:
   - url: http://{host}:{port}
-    description: Knowledge base provider endpoint
+    description: Knowledge base service endpoint
     variables:
       host:
         default: localhost
       port:
-        default: '8080'
+        default: "8080"
 
 paths:
-  /provider/health:
+  /health:
     get:
       operationId: healthCheck
       summary: Health check
+      description: Check service health, txtai and LLM availability
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /chat:
+    post:
+      operationId: chatStream
+      summary: Chat with knowledge base (streaming)
+      description: >
+        Send a message and receive streaming response with RAG pipeline:
+        query processing, knowledge search, context building, LLM inference.
+        Response is Server-Sent Events (SSE) stream.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+      responses:
+        "200":
+          description: Streaming response
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/ChatStreamEvent"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /provider/health:
+    get:
+      operationId: providerHealthCheck
+      summary: Provider health check (legacy)
       description: Check provider health and txtai availability
       responses:
-        '200':
+        "200":
           description: Provider is healthy
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HealthResponse'
+                $ref: "#/components/schemas/HealthResponse"
 
   /provider/search:
     post:
       operationId: searchKnowledge
       summary: Search knowledge base
-      description: |
-        Search knowledge base using hybrid retrieval (vector + keyword).
-        Called by Context Assembly Service during context assembly.
+      description: Search knowledge base using hybrid retrieval (vector + keyword)
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ProviderSearchRequest'
+              $ref: "#/components/schemas/ProviderSearchRequest"
       responses:
-        '200':
+        "200":
           description: Search results
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProviderSearchResponse'
-        '400':
+                $ref: "#/components/schemas/ProviderSearchResponse"
+        "400":
           description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
           description: Provider error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   /documents:
     post:
       operationId: uploadDocument
       summary: Upload and index a document
-      description: |
-        Upload a document for indexing into the knowledge base.
-        Supports both text content (JSON) and file uploads (multipart/form-data).
-        Supported file types: 
-        - Images: jpg, png, gif, webp
-        - Videos: mp4, avi, mov
-        - Documents: pdf, doc, docx
-        - Audio files: all audio/* MIME types
-        - Text files: all text/* MIME types
+      description: Upload a document for indexing into the knowledge base
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/DocumentUploadRequest'
+              $ref: "#/components/schemas/DocumentUploadRequest"
           multipart/form-data:
             schema:
-              $ref: '#/components/schemas/FileUploadRequest'
+              $ref: "#/components/schemas/FileUploadRequest"
       responses:
-        '200':
+        "200":
           description: Document uploaded and indexed
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DocumentUploadResponse'
-        '400':
+                $ref: "#/components/schemas/DocumentUploadResponse"
+        "400":
           description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
           description: Internal error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
     get:
       operationId: listDocuments
@@ -122,12 +159,12 @@ paths:
             type: integer
             default: 0
       responses:
-        '200':
+        "200":
           description: List of documents
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DocumentListResponse'
+                $ref: "#/components/schemas/DocumentListResponse"
 
   /documents/{documentId}:
     get:
@@ -140,18 +177,18 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Document details
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Document'
-        '404':
+                $ref: "#/components/schemas/Document"
+        "404":
           description: Document not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
     delete:
       operationId: deleteDocument
@@ -163,21 +200,132 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Document deleted
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DeleteResponse'
-        '404':
+                $ref: "#/components/schemas/DeleteResponse"
+        "404":
           description: Document not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
 components:
   schemas:
+    ChatRequest:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          description: User message
+        threadId:
+          type: string
+          description: Thread ID for conversation continuity
+        runId:
+          type: string
+          description: Run ID for this request
+        user_id:
+          type: string
+          description: User ID for personalization
+        options:
+          type: object
+          properties:
+            search_limit:
+              type: integer
+              default: 5
+              description: Max knowledge chunks to retrieve
+            temperature:
+              type: number
+              default: 0.7
+              description: LLM temperature
+            max_tokens:
+              type: integer
+              default: 2048
+              description: Max response tokens
+            include_sources:
+              type: boolean
+              default: true
+              description: Include source references in response
+
+    ChatStreamEvent:
+      type: object
+      description: >
+        SSE event in the chat stream (AG-UI Protocol compatible).
+        Event types: RUN_STARTED, TEXT_MESSAGE_START, TEXT_MESSAGE_CHUNK,
+        TEXT_MESSAGE_END, RUN_FINISHED, RUN_ERROR, CUSTOM
+      required:
+        - type
+        - threadId
+        - runId
+      properties:
+        type:
+          type: string
+          description: AG-UI event type
+          enum:
+            - RUN_STARTED
+            - TEXT_MESSAGE_START
+            - TEXT_MESSAGE_CHUNK
+            - TEXT_MESSAGE_END
+            - RUN_FINISHED
+            - RUN_ERROR
+            - CUSTOM
+        threadId:
+          type: string
+          description: Thread/conversation ID
+        runId:
+          type: string
+          description: Run ID for this request
+        messageId:
+          type: string
+          description: Message ID (for TEXT_MESSAGE_* events)
+        role:
+          type: string
+          enum:
+            - assistant
+            - user
+          description: Message role (for TEXT_MESSAGE_START)
+        delta:
+          type: string
+          description: Text content chunk (for TEXT_MESSAGE_CHUNK)
+        error:
+          type: string
+          description: Error message (for RUN_ERROR)
+        name:
+          type: string
+          description: Custom event name (for CUSTOM type)
+        value:
+          type: object
+          additionalProperties: true
+          description: Custom event value (for CUSTOM type, e.g. sources, usage)
+
+    SourceReference:
+      type: object
+      properties:
+        chunk_id:
+          type: string
+        document_title:
+          type: string
+        content_preview:
+          type: string
+          description: First 100 chars of content
+        score:
+          type: number
+
+    TokenUsage:
+      type: object
+      properties:
+        prompt_tokens:
+          type: integer
+        completion_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+
     HealthResponse:
       type: object
       required:
@@ -186,7 +334,10 @@ components:
       properties:
         status:
           type: string
-          enum: [healthy, degraded, unhealthy]
+          enum:
+            - healthy
+            - degraded
+            - unhealthy
         version:
           type: string
         txtai:
@@ -196,6 +347,15 @@ components:
               type: boolean
             url:
               type: string
+        llm:
+          type: object
+          properties:
+            provider:
+              type: string
+            model:
+              type: string
+            available:
+              type: boolean
 
     ProviderSearchRequest:
       type: object
@@ -217,15 +377,15 @@ components:
           description: Maximum number of chunks to return
         token_budget:
           type: integer
-          description: Token budget for results (approximate)
+          description: Token budget for results
         filters:
           type: object
           additionalProperties: true
-          description: Provider-specific filters (categories, tags, etc.)
+          description: Provider-specific filters
         metadata:
           type: object
           additionalProperties: true
-          description: Additional context (intent, conversation_id, etc.)
+          description: Additional context
 
     ProviderSearchResponse:
       type: object
@@ -236,11 +396,11 @@ components:
       properties:
         provider_name:
           type: string
-          description: Provider identifier (must match configuration)
+          description: Provider identifier
         chunks:
           type: array
           items:
-            $ref: '#/components/schemas/ProviderChunk'
+            $ref: "#/components/schemas/ProviderChunk"
         total_tokens:
           type: integer
           description: Total token count of all chunks
@@ -261,12 +421,12 @@ components:
           description: Unique chunk identifier
         content:
           type: string
-          description: Chunk text content (text description for images/videos, or actual text for documents)
+          description: Chunk text content
         score:
           type: number
           minimum: 0
           maximum: 1
-          description: Relevance score (0-1)
+          description: Relevance score 0-1
         document_id:
           type: string
           description: Source document ID
@@ -275,12 +435,16 @@ components:
           description: Source document title
         media_type:
           type: string
-          enum: [text, image, video, audio]
-          description: Type of media content (default: text)
+          description: Type of media content
+          enum:
+            - text
+            - image
+            - video
+            - audio
         media_url:
           type: string
           format: uri
-          description: URL to the media file (for images/videos)
+          description: URL to the media file
         metadata:
           type: object
           additionalProperties: true
@@ -297,17 +461,17 @@ components:
           description: Document title
         content:
           type: string
-          description: Document content (text)
+          description: Document content
         category:
           type: string
-          description: Document category (optional)
+          description: Document category
         description:
           type: string
-          description: Document description (optional)
+          description: Document description
         metadata:
           type: object
           additionalProperties: true
-          description: Custom metadata (optional)
+          description: Custom metadata
 
     FileUploadRequest:
       type: object
@@ -321,16 +485,16 @@ components:
         file:
           type: string
           format: binary
-          description: File to upload (image, video, or text file)
+          description: File to upload
         category:
           type: string
-          description: Document category (optional)
+          description: Document category
         description:
           type: string
-          description: Document description (optional)
+          description: Document description
         metadata:
           type: string
-          description: JSON string of custom metadata (optional)
+          description: JSON string of custom metadata
 
     DocumentUploadResponse:
       type: object
@@ -342,7 +506,10 @@ components:
           type: string
         status:
           type: string
-          enum: [indexed, processing, failed]
+          enum:
+            - indexed
+            - processing
+            - failed
         chunks_count:
           type: integer
           description: Number of chunks created
@@ -367,15 +534,22 @@ components:
           type: string
         media_type:
           type: string
-          enum: [text, image, video, audio]
-          description: Type of media content (default: text)
+          description: Type of media content
+          enum:
+            - text
+            - image
+            - video
+            - audio
         media_url:
           type: string
           format: uri
-          description: URL to the stored media file (for images/videos)
+          description: URL to the stored media file
         status:
           type: string
-          enum: [indexed, processing, failed]
+          enum:
+            - indexed
+            - processing
+            - failed
         chunks_count:
           type: integer
         created_at:
@@ -397,7 +571,7 @@ components:
         documents:
           type: array
           items:
-            $ref: '#/components/schemas/Document'
+            $ref: "#/components/schemas/Document"
         total:
           type: integer
         limit:
@@ -428,4 +602,3 @@ components:
         details:
           type: object
           additionalProperties: true
-

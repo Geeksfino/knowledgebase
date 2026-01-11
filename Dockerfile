@@ -1,5 +1,5 @@
 # Knowledge Base Provider Dockerfile
-FROM oven/bun:1.1 AS builder
+FROM oven/bun:latest AS builder
 
 WORKDIR /app
 
@@ -13,13 +13,17 @@ RUN bun install --frozen-lockfile
 COPY . .
 
 # Production stage
-FROM oven/bun:1.1-slim
+FROM oven/bun:latest
+
+# Install curl for healthcheck
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # Copy from builder
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/src ./src
+COPY --from=builder /app/libs ./libs
 COPY --from=builder /app/package.json ./
 
 # Create data directory

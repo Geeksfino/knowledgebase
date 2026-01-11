@@ -1,168 +1,126 @@
-# 环境配置指南
-
-本文档详细说明 Knowledge Base Provider 服务的环境变量配置。
+# 环境配置
 
 ## 配置方式
 
-### 方式 1: 使用 .env 文件（开发环境推荐）
-
 ```bash
-# 复制配置模板
 cp env.example .env
-
-# 编辑配置
 nano .env
-
-# 启动服务（会自动读取 .env 文件）
-bun run dev
 ```
 
-### 方式 2: 使用环境变量（生产环境推荐）
+## 配置项
 
+### LLM 配置（必需）
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `LLM_PROVIDER` | deepseek | 提供商 (deepseek/openai/anthropic/litellm) |
+| `LLM_MODEL` | deepseek-chat | 模型 |
+| `LLM_API_KEY` | - | API 密钥（**必需**） |
+| `LLM_BASE_URL` | 自动 | API 地址 |
+| `LLM_TIMEOUT_MS` | 60000 | 超时（毫秒） |
+
+**示例**：
 ```bash
-export PORT=8080
-export TXTAI_URL=http://txtai:8000
-export PROVIDER_NAME=production_kb
-bun run start
+LLM_PROVIDER=deepseek
+LLM_MODEL=deepseek-chat
+LLM_API_KEY=sk-xxx
 ```
 
-## 配置项详解
+### 服务配置
 
-### 服务基础配置
-
-| 变量 | 默认值 | 描述 |
+| 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `PORT` | 8080 | 服务监听端口 |
-| `HOST` | 0.0.0.0 | 服务绑定地址 |
+| `PORT` | 8080 | 服务端口 |
+| `HOST` | 0.0.0.0 | 绑定地址 |
 
-### txtai 向量检索配置
+### txtai 配置
 
-| 变量 | 默认值 | 描述 |
+| 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `TXTAI_URL` | http://127.0.0.1:8000 | txtai 服务地址 |
-| `TXTAI_API_KEY` | - | txtai API 密钥（可选） |
-| `TXTAI_TIMEOUT` | 30000 | 请求超时时间（毫秒） |
+| `TXTAI_URL` | http://127.0.0.1:8000 | txtai 地址 |
+| `TXTAI_TIMEOUT` | 30000 | 超时（毫秒） |
 
-### 文件存储配置
+### 搜索配置
 
-| 变量 | 默认值 | 描述 |
+| 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `STORAGE_PATH` | ./data/documents | 文档存储路径 |
-| `MEDIA_PATH` | ./data/media | 媒体文件存储路径 |
-| `MEDIA_BASE_URL` | http://localhost:8080/media | 媒体文件访问基础 URL |
-| `MAX_FILE_SIZE` | 10485760 | 最大文件大小（字节，默认 10MB） |
+| `DEFAULT_SEARCH_LIMIT` | 5 | 默认结果数 |
+| `MAX_SEARCH_LIMIT` | 20 | 最大结果数 |
+| `MIN_SEARCH_SCORE` | 0.3 | 最小相似度 |
+| `TXTAI_HYBRID_WEIGHTS` | 0.4,0.6 | 混合权重 [向量,BM25] |
 
-### 搜索参数配置
+### 查询处理
 
-| 变量 | 默认值 | 描述 |
+| 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `DEFAULT_SEARCH_LIMIT` | 5 | 默认返回结果数 |
-| `MAX_SEARCH_LIMIT` | 20 | 最大返回结果数 |
-| `MIN_SEARCH_SCORE` | 0.3 | 最小相似度分数阈值 |
-| `TXTAI_HYBRID_WEIGHTS` | 0.4,0.6 | 混合搜索权重 [向量,BM25] |
+| `QUERY_LLM_ENABLED` | true | 启用 LLM 处理 |
+| `QUERY_EXPANSION_ENABLED` | true | 启用查询扩展 |
+| `QUERY_EXPANSION_MAX` | 3 | 最大扩展数 |
 
-#### 混合搜索权重说明
+### Chat 配置
 
-- `0.0,1.0` - 纯关键词搜索（BM25）
-- `1.0,0.0` - 纯向量搜索
-- `0.5,0.5` - 平衡混合
-- `0.4,0.6`（默认）- 略偏向关键词，提高精确匹配能力
-
-### 文档分块配置
-
-| 变量 | 默认值 | 描述 |
+| 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `CHUNK_SIZE` | 500 | 分块大小（字符数） |
-| `CHUNK_OVERLAP` | 50 | 分块重叠字符数 |
+| `CHAT_DEFAULT_TEMPERATURE` | 0.7 | LLM 温度 |
+| `CHAT_DEFAULT_MAX_TOKENS` | 2048 | 最大 token |
+| `CHAT_DEFAULT_SEARCH_LIMIT` | 5 | 搜索结果数 |
+| `CHAT_SYSTEM_PROMPT` | 内置 | 系统提示词 |
 
-### Provider 信息
+### 限流配置
 
-| 变量 | 默认值 | 描述 |
+| 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `PROVIDER_NAME` | customer_kb | Provider 名称标识 |
+| `LLM_RATE_LIMIT_MAX_TOKENS` | 10 | LLM 令牌数 |
+| `LLM_RATE_LIMIT_REFILL_RATE` | 2 | 每秒恢复 |
+| `LLM_QUEUE_CONCURRENCY` | 5 | 并发数 |
+| `LLM_QUEUE_MAX_SIZE` | 50 | 队列大小 |
+| `CHAT_RATE_LIMIT_MAX_TOKENS` | 20 | Chat 令牌数 |
+| `CHAT_RATE_LIMIT_REFILL_RATE` | 5 | 每秒恢复 |
 
-### 查询处理（LLM）配置
+### 存储配置
 
-| 变量 | 默认值 | 描述 |
+| 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `QUERY_LLM_ENABLED` | false | 是否启用 LLM 查询处理 |
-| `QUERY_LLM_URL` | http://localhost:26404 | LLM 服务地址 |
-| `QUERY_LLM_TIMEOUT` | 10000 | LLM 请求超时时间（毫秒） |
-| `QUERY_EXPANSION_ENABLED` | true | 是否启用查询扩展 |
-| `QUERY_EXPANSION_MAX` | 3 | 最多生成的查询变体数量 |
+| `STORAGE_PATH` | ./data/documents | SQLite 路径 |
+| `MEDIA_PATH` | ./data/media | 媒体文件路径 |
+| `MAX_FILE_SIZE` | 10485760 | 最大文件（字节） |
 
-## 生产环境部署建议
+### 分块配置
 
-### 1. 文件存储
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `CHUNK_SIZE` | 500 | 分块大小 |
+| `CHUNK_OVERLAP` | 50 | 重叠字符 |
 
-生产环境建议使用持久化存储：
+## 示例配置
+
+### 开发环境
 
 ```bash
-# Docker 挂载卷
-docker run -v /data/knowledgebase:/app/data ...
-
-# 或使用网络存储
-export STORAGE_PATH=/mnt/nfs/knowledgebase/documents
-export MEDIA_PATH=/mnt/nfs/knowledgebase/media
-```
-
-### 2. txtai 服务
-
-确保 txtai 服务高可用：
-
-```bash
-# 内部网络访问
-export TXTAI_URL=http://txtai-service:8000
-
-# 增加超时时间
-export TXTAI_TIMEOUT=60000
-```
-
-### 3. 媒体文件访问
-
-配置正确的外部访问 URL：
-
-```bash
-# 通过负载均衡器访问
-export MEDIA_BASE_URL=https://api.example.com/media
-```
-
-### 4. 安全配置
-
-```bash
-# 限制绑定地址
-export HOST=127.0.0.1
-
-# 限制文件大小
-export MAX_FILE_SIZE=5242880  # 5MB
-```
-
-## 示例配置文件
-
-### 开发环境 (.env.development)
-
-```bash
+LLM_PROVIDER=deepseek
+LLM_API_KEY=sk-xxx
 PORT=8080
-HOST=0.0.0.0
 TXTAI_URL=http://localhost:8000
-PROVIDER_NAME=dev_kb
-DEBUG=true
 ```
 
-### 生产环境 (.env.production)
+### 生产环境
 
 ```bash
+LLM_PROVIDER=deepseek
+LLM_API_KEY=sk-xxx
 PORT=8080
-HOST=0.0.0.0
 TXTAI_URL=http://txtai:8000
-PROVIDER_NAME=production_kb
 STORAGE_PATH=/data/documents
-MEDIA_PATH=/data/media
-MEDIA_BASE_URL=https://api.example.com/media
-MAX_FILE_SIZE=10485760
-TXTAI_TIMEOUT=60000
 MIN_SEARCH_SCORE=0.35
-QUERY_LLM_ENABLED=true
-QUERY_LLM_URL=http://llm-adapter:26404
 ```
 
+## Docker Compose
+
+```yaml
+services:
+  knowledgebase:
+    environment:
+      - LLM_PROVIDER=deepseek
+      - LLM_API_KEY=${LLM_API_KEY}
+      - TXTAI_URL=http://txtai:8000
+```

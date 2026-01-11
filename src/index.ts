@@ -1,19 +1,23 @@
 /**
- * Knowledge Base Provider Service
+ * Knowledge Base Service
  *
- * 外部知识库 Provider 服务，基于 txtai 实现向量检索和混合搜索。
- * 实现标准 Knowledge Provider 接口，用于与 chatkit-middleware 的 Context Assembly 集成。
+ * 独立的知识库问答服务，提供：
+ * - 流式会话（RAG 问答）
+ * - 知识库搜索（混合检索）
+ * - 文档管理
  *
  * ## 主要功能
  * - 混合搜索（向量 + BM25 关键词）
  * - 多模态支持（文本、图片、视频、PDF/Word文档）
  * - 智能查询处理（LLM 查询扩展和重写）
- * - 文档分块和索引管理
+ * - 流式输出（SSE）
  *
  * ## API 端点 (基于 OpenAPI 契约)
- * - GET  /provider/health     - 健康检查
+ * - GET  /health              - 健康检查
+ * - POST /chat                - 流式会话（RAG）
+ * - GET  /provider/health     - 健康检查（兼容）
  * - POST /provider/search     - 搜索知识库
- * - POST /documents           - 上传文档（支持 JSON 和文件上传）
+ * - POST /documents           - 上传文档
  * - GET  /documents           - 列出文档
  * - GET  /documents/:id       - 获取文档详情
  * - DELETE /documents/:id     - 删除文档
@@ -26,6 +30,7 @@ import { config } from './config.js';
 import { logger } from './utils/logger.js';
 import { getMimeType } from './utils/mime-types.js';
 import { txtaiService } from './services/txtai-service.js';
+import { initializeProviderFactory, getProviderFactory } from './services/llm/index.js';
 import { handleHealthCheck } from './handlers/health.js';
 import {
   handleSearch,
@@ -40,6 +45,11 @@ import {
   handleDeleteDocument,
   type DocumentUploadRequest,
 } from './handlers/documents.js';
+import {
+  handleChatStream,
+  handleChat,
+  type ChatRequest,
+} from './handlers/chat.js';
 import { fileStorage } from './services/file-storage.js';
 
 /**
@@ -54,21 +64,74 @@ const corsHeaders = {
 
 /**
  * 服务启动初始化
+ * - 初始化 LLM Provider
  * - 初始化文件存储目录
  * - 检查 txtai 服务连接状态
  */
-Promise.all([
-  fileStorage.initialize(),
-  txtaiService.healthCheck(),
-]).then(([, healthy]) => {
-  if (healthy) {
-    logger.info('txtai service is available', { url: config.txtai.url });
+async function initialize() {
+  // 初始化 LLM Provider Factory
+  const llmFactory = initializeProviderFactory(config.llm);
+  const llmProviders = llmFactory.listProviders();
+  const defaultProvider = llmProviders.find(p => p.default);
+  
+  logger.info({
+    provider: defaultProvider?.id,
+    model: config.llm.model,
+    available: defaultProvider?.available,
+  }, '🤖 LLM Provider initialized');
+
+  // 初始化文件存储和检查 txtai
+  const [, txtaiHealthy] = await Promise.all([
+    fileStorage.initialize(),
+    txtaiService.healthCheck(),
+  ]);
+
+  if (txtaiHealthy) {
+    logger.info({ url: config.txtai.url }, '✅ txtai service is available');
   } else {
-    logger.warn('txtai service is not available - search functionality may be limited', {
+    logger.warn({
       url: config.txtai.url,
-    });
+    }, '⚠️ txtai service is not available - search functionality may be limited');
   }
+}
+
+// 执行初始化
+initialize().catch(err => {
+  logger.error({ error: err.message }, '❌ Initialization failed');
 });
+
+/**
+ * 扩展健康检查，包含 LLM 状态
+ */
+async function handleExtendedHealthCheck(): Promise<Response> {
+  const baseHealth = await handleHealthCheck();
+  
+  // 添加 LLM 状态
+  try {
+    const factory = getProviderFactory();
+    const providers = factory.listProviders();
+    const defaultProvider = providers.find(p => p.default);
+    const llmHealth = await factory.healthCheck();
+    
+    return Response.json({
+      ...baseHealth,
+      llm: {
+        provider: defaultProvider?.id,
+        model: config.llm.model,
+        available: defaultProvider?.available && llmHealth[defaultProvider.id],
+      },
+    }, { headers: corsHeaders });
+  } catch {
+    return Response.json({
+      ...baseHealth,
+      llm: {
+        provider: config.llm.provider,
+        model: config.llm.model,
+        available: false,
+      },
+    }, { headers: corsHeaders });
+  }
+}
 
 const server = Bun.serve({
   port: config.port,
@@ -76,10 +139,9 @@ const server = Bun.serve({
 
   async fetch(req) {
     const url = new URL(req.url);
-    // Extract required headers (following contract-first pattern)
+    // Extract required headers
     const requestId = req.headers.get('x-request-id') || `req_${Date.now()}`;
     const userId = req.headers.get('x-user-id');
-    const jurisdiction = req.headers.get('x-jurisdiction');
 
     // Handle CORS preflight
     if (req.method === 'OPTIONS') {
@@ -87,13 +149,66 @@ const server = Bun.serve({
     }
 
     try {
-      // Health check
+      // ============================================
+      // Health Check Endpoints
+      // ============================================
+      
+      // New health endpoint
+      if (req.method === 'GET' && url.pathname === '/health') {
+        return handleExtendedHealthCheck();
+      }
+      
+      // Legacy health endpoint (for compatibility)
       if (req.method === 'GET' && url.pathname === '/provider/health') {
-        const response = await handleHealthCheck();
-        return Response.json(response, { headers: corsHeaders });
+        return handleExtendedHealthCheck();
       }
 
-      // Search endpoint
+      // ============================================
+      // Chat Endpoint (流式会话)
+      // ============================================
+      
+      if (req.method === 'POST' && url.pathname === '/chat') {
+        try {
+          const body = (await req.json()) as ChatRequest;
+
+          // Validate required fields
+          if (!body.message) {
+            const error: ErrorResponse = {
+              error: 'Missing required field: message',
+              code: 'INVALID_REQUEST',
+            };
+            return Response.json(error, { status: 400, headers: corsHeaders });
+          }
+
+          // Check if client wants streaming (default: yes)
+          const acceptHeader = req.headers.get('accept') || '';
+          const wantsStream = acceptHeader.includes('text/event-stream') || 
+                             !acceptHeader.includes('application/json');
+
+          if (wantsStream) {
+            // Streaming response
+            return handleChatStream(body);
+          } else {
+            // Non-streaming response
+            const result = await handleChat(body);
+            return Response.json(result, { headers: corsHeaders });
+          }
+        } catch (error) {
+          logger.error('Chat request error', {
+            error: error instanceof Error ? error.message : 'Unknown',
+          });
+          const errorResponse: ErrorResponse = {
+            error: error instanceof Error ? error.message : 'Chat request failed',
+            code: 'CHAT_ERROR',
+          };
+          return Response.json(errorResponse, { status: 500, headers: corsHeaders });
+        }
+      }
+
+      // ============================================
+      // Search Endpoint
+      // ============================================
+      
       if (req.method === 'POST' && url.pathname === '/provider/search') {
         const body = (await req.json()) as ProviderSearchRequest;
 
@@ -109,6 +224,10 @@ const server = Bun.serve({
         const response = await handleSearch(body);
         return Response.json(response, { headers: corsHeaders });
       }
+
+      // ============================================
+      // Document Endpoints
+      // ============================================
 
       // Upload document (supports both JSON and multipart/form-data)
       if (req.method === 'POST' && url.pathname === '/documents') {
@@ -244,15 +363,33 @@ const server = Bun.serve({
         return Response.json(response, { status, headers: corsHeaders });
       }
 
-      // Root endpoint - basic info
+      // ============================================
+      // Root Endpoint
+      // ============================================
+      
       if (req.method === 'GET' && url.pathname === '/') {
+        // Get LLM info
+        let llmInfo = { provider: config.llm.provider, model: config.llm.model, available: false };
+        try {
+          const factory = getProviderFactory();
+          const providers = factory.listProviders();
+          const defaultProvider = providers.find(p => p.default);
+          llmInfo = {
+            provider: defaultProvider?.id || config.llm.provider,
+            model: config.llm.model,
+            available: defaultProvider?.available || false,
+          };
+        } catch { /* ignore */ }
+
         return Response.json(
           {
-            name: 'Knowledge Base Provider',
+            name: 'Knowledge Base Service',
             version: config.provider.version,
             provider_name: config.provider.name,
+            llm: llmInfo,
             endpoints: {
-              health: 'GET /provider/health',
+              health: 'GET /health',
+              chat: 'POST /chat (streaming)',
               search: 'POST /provider/search',
               documents: {
                 list: 'GET /documents',
@@ -260,6 +397,7 @@ const server = Bun.serve({
                 get: 'GET /documents/:id',
                 delete: 'DELETE /documents/:id',
               },
+              media: 'GET /media/:docId/:file',
             },
           },
           { headers: corsHeaders }
@@ -273,7 +411,6 @@ const server = Bun.serve({
         error: error instanceof Error ? error.message : 'Unknown',
         requestId,
         userId,
-        jurisdiction,
         path: url.pathname,
         method: req.method,
       });
@@ -291,10 +428,11 @@ const server = Bun.serve({
   },
 });
 
-logger.info(`Knowledge Base Provider started`, {
+logger.info({
   host: config.host,
   port: config.port,
   providerName: config.provider.name,
   txtaiUrl: config.txtai.url,
-});
-
+  llmProvider: config.llm.provider,
+  llmModel: config.llm.model,
+}, `🚀 Knowledge Base Service started on http://${config.host}:${config.port}`);

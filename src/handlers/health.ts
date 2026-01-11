@@ -1,41 +1,51 @@
 /**
  * Health Handler
- * 
- * Handles health check requests.
  */
 
 import { config } from '../config.js';
 import { txtaiService } from '../services/txtai-service.js';
 import { documentStore } from '../services/document-store.js';
-// Import types from generated contract
-// Following contract-first pattern: contracts are sacred, implementations are disposable
+import { getAllRateLimiterStats } from '../services/rate-limiter.js';
+import { getProviderFactory } from '../services/llm/index.js';
 import type { components } from '@knowledgebase/contracts-ts/generated/knowledge-provider';
 
-// Extract type from contract
 export type HealthResponse = components['schemas']['HealthResponse'] & {
-  documents?: {
-    count: number;
+  documents?: { count: number };
+  rateLimiter?: {
+    llm: { availableTokens: number; rejectRate: number };
+    chat: { availableTokens: number; rejectRate: number };
   };
 };
 
-/**
- * Handle health check
- */
 export async function handleHealthCheck(): Promise<HealthResponse> {
   const txtaiHealthy = await txtaiService.healthCheck();
   const docCount = documentStore.count();
 
-  const status = txtaiHealthy ? 'healthy' : 'degraded';
+  let llmAvailable = false;
+  try {
+    llmAvailable = getProviderFactory().getProvider().available;
+  } catch {
+    llmAvailable = false;
+  }
+
+  const rateLimiterStats = getAllRateLimiterStats();
+  const status = txtaiHealthy && llmAvailable ? 'healthy' : 'degraded';
 
   return {
     status,
     version: config.provider.version,
-    txtai: {
-      available: txtaiHealthy,
-      url: config.txtai.url,
-    },
-    documents: {
-      count: docCount,
+    txtai: { available: txtaiHealthy, url: config.txtai.url },
+    llm: { available: llmAvailable, provider: config.llm.provider },
+    documents: { count: docCount },
+    rateLimiter: {
+      llm: {
+        availableTokens: rateLimiterStats.llmRateLimiter.availableTokens,
+        rejectRate: Math.round(rateLimiterStats.llmRateLimiter.rejectRate * 100) / 100,
+      },
+      chat: {
+        availableTokens: rateLimiterStats.chatRateLimiter.availableTokens,
+        rejectRate: Math.round(rateLimiterStats.chatRateLimiter.rejectRate * 100) / 100,
+      },
     },
   };
 }

@@ -18,6 +18,7 @@
 
 import { logger } from '../utils/logger.js';
 import { getMimeType } from '../utils/mime-types.js';
+import { calculateContentHash, calculateFileHash } from '../utils/hash.js';
 import { txtaiService } from '../services/txtai-service.js';
 import { documentProcessor } from '../services/document-processor.js';
 import { documentStore, type StoredDocument } from '../services/document-store.js';
@@ -46,16 +47,40 @@ function generateDocumentId(): string {
 
 /**
  * Handle document upload
+ * 
+ * Deduplication: If a document with the same content hash already exists,
+ * returns the existing document instead of creating a duplicate.
  */
 export async function handleUploadDocument(
   request: DocumentUploadRequest
 ): Promise<DocumentUploadResponse> {
+  // Calculate content hash for deduplication
+  const contentHash = calculateContentHash(request.content);
+
+  // Check for duplicate content
+  const existingDoc = documentStore.findByContentHash(contentHash);
+  if (existingDoc) {
+    logger.info('Duplicate document detected, returning existing', {
+      existingDocumentId: existingDoc.document_id,
+      title: request.title,
+      existingTitle: existingDoc.title,
+    });
+
+    return {
+      document_id: existingDoc.document_id,
+      status: 'indexed',
+      chunks_count: existingDoc.chunks_count,
+      message: `Duplicate content detected. Returning existing document (ID: ${existingDoc.document_id}, Title: "${existingDoc.title}")`,
+    };
+  }
+
   const documentId = generateDocumentId();
 
   logger.info('Document upload started', {
     documentId,
     title: request.title,
     contentLength: request.content.length,
+    contentHash: contentHash.substring(0, 16) + '...',
   });
 
   try {
@@ -76,7 +101,7 @@ export async function handleUploadDocument(
       }))
     );
 
-    // Store document metadata
+    // Store document metadata with content hash
     documentStore.upsert({
       document_id: documentId,
       title: request.title,
@@ -86,8 +111,9 @@ export async function handleUploadDocument(
       chunks_count: processed.total_chunks,
       created_at: processed.created_at,
       updated_at: processed.created_at,
-      media_type: 'text', // Text documents default to 'text'
+      media_type: 'text',
       metadata: request.metadata,
+      content_hash: contentHash,
     });
 
     logger.info('Document upload completed', {
@@ -107,7 +133,7 @@ export async function handleUploadDocument(
       error: error instanceof Error ? error.message : 'Unknown',
     });
 
-    // Store failed document
+    // Store failed document (without hash to allow retry)
     documentStore.upsert({
       document_id: documentId,
       title: request.title,
@@ -155,29 +181,20 @@ export function handleGetDocument(documentId: string): StoredDocument | null {
 
 /**
  * Handle file upload (multipart/form-data)
+ * 
+ * Deduplication: If a file with the same content hash already exists,
+ * returns the existing document instead of creating a duplicate.
  */
 export async function handleUploadFile(
   formData: FormData
 ): Promise<DocumentUploadResponse> {
-  const documentId = generateDocumentId();
-
   try {
-    logger.info('Processing file upload', { documentId });
-    
-    // Extract form fields
+    // Extract form fields first
     const title = formData.get('title');
     const file = formData.get('file');
     const category = formData.get('category');
     const description = formData.get('description');
     const metadataStr = formData.get('metadata');
-
-    logger.info('Form data extracted', {
-      documentId,
-      hasTitle: !!title,
-      hasFile: !!file,
-      titleType: typeof title,
-      fileType: file?.constructor?.name,
-    });
 
     if (!title || typeof title !== 'string') {
       throw new Error('Missing or invalid title field');
@@ -193,6 +210,51 @@ export async function handleUploadFile(
       mimeType = getMimeType(file.name);
     }
 
+    // Read file buffer
+    let fileBuffer: Buffer;
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      fileBuffer = Buffer.from(arrayBuffer);
+    } catch (error) {
+      throw new Error(`Failed to read file: ${error instanceof Error ? error.message : 'Unknown'}`);
+    }
+
+    // Calculate file hash for deduplication
+    const contentHash = calculateFileHash(fileBuffer);
+
+    // Check for duplicate content
+    const existingDoc = documentStore.findByContentHash(contentHash);
+    if (existingDoc) {
+      logger.info('Duplicate file detected, returning existing', {
+        existingDocumentId: existingDoc.document_id,
+        filename: file.name,
+        existingTitle: existingDoc.title,
+      });
+
+      return {
+        document_id: existingDoc.document_id,
+        status: 'indexed',
+        chunks_count: existingDoc.chunks_count,
+        message: `Duplicate file detected. Returning existing document (ID: ${existingDoc.document_id}, Title: "${existingDoc.title}")`,
+      };
+    }
+
+    const documentId = generateDocumentId();
+
+    logger.info('Processing file upload', { 
+      documentId,
+      filename: file.name,
+      contentHash: contentHash.substring(0, 16) + '...',
+    });
+
+    logger.info('Form data extracted', {
+      documentId,
+      hasTitle: !!title,
+      hasFile: !!file,
+      titleType: typeof title,
+      fileType: file?.constructor?.name,
+    });
+
     logger.info('File info', {
       documentId,
       filename: file.name,
@@ -200,20 +262,6 @@ export async function handleUploadFile(
       mimeType: mimeType,
       fileType: file.type,
     });
-
-    // Read file buffer
-    let fileBuffer: Buffer;
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      fileBuffer = Buffer.from(arrayBuffer);
-      logger.info('File buffer read', { documentId, bufferSize: fileBuffer.length });
-    } catch (error) {
-      logger.error('Failed to read file buffer', {
-        documentId,
-        error: error instanceof Error ? error.message : 'Unknown',
-      });
-      throw new Error(`Failed to read file: ${error instanceof Error ? error.message : 'Unknown'}`);
-    }
 
     // Validate file type
     const mediaFile: MediaFile = {
@@ -283,19 +331,20 @@ export async function handleUploadFile(
       );
     }
 
-    // Store document metadata
+    // Store document metadata with content hash
     documentStore.upsert({
       document_id: documentId,
       title,
-      category,
-      description,
+      category: category as string | undefined,
+      description: description as string | undefined,
       status: 'indexed',
       chunks_count: processed.total_chunks,
       created_at: processed.created_at,
       updated_at: processed.created_at,
       media_type: processedMedia.mediaType,
       media_url: mediaUrl,
-      metadata: metadataStr ? JSON.parse(metadataStr) : undefined,
+      metadata: metadataStr ? JSON.parse(metadataStr as string) : undefined,
+      content_hash: contentHash,
     });
 
     logger.info('File upload completed', {
@@ -312,25 +361,11 @@ export async function handleUploadFile(
     };
   } catch (error) {
     logger.error('File upload failed', {
-      documentId,
       error: error instanceof Error ? error.message : 'Unknown',
     });
 
-    // Store failed document
-    documentStore.upsert({
-      document_id: documentId,
-      title: (formData.get('title') as string) || 'Unknown',
-      category: (formData.get('category') as string) || undefined,
-      description: (formData.get('description') as string) || undefined,
-      status: 'failed',
-      chunks_count: 0,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      metadata: undefined,
-    });
-
     return {
-      document_id: documentId,
+      document_id: '',
       status: 'failed',
       message: error instanceof Error ? error.message : 'Unknown error',
     };

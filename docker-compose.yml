@@ -11,24 +11,45 @@
 # 对外暴露端口:
 #   - 8080: Knowledge Base Provider API
 
-version: '3.8'
 
 services:
   # txtai 服务（内部服务，不对外暴露端口）
   txtai:
-    image: neuml/txtai:latest
+    image: neuml/txtai-cpu:latest
     container_name: knowledgebase-txtai
     # expose 仅暴露给内部网络，不映射到主机
     expose:
       - "8000"
+    # 添加 DNS 配置解决容器内网络问题
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     environment:
       # 使用轻量级模型
       - CONFIG=/app/config.yml
+      # 使用 Hugging Face 镜像站加速下载
+      - HF_ENDPOINT=https://hf-mirror.com
+    # 使用 uvicorn 启动 txtai API 服务
+    command: ["uvicorn", "txtai.api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
     volumes:
       - txtai_data:/app/data
+      - nltk_data:/root/nltk_data
+      - hf_cache:/root/.cache/huggingface
       - ./txtai-config.yml:/app/config.yml:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000"]
+      # 使用 /count 端点检查健康状态，返回 200 OK
+      test:
+        - CMD
+        - python3
+        - -c
+        - |
+          import urllib.request
+          import sys
+          try:
+            urllib.request.urlopen('http://localhost:8000/count').read()
+            sys.exit(0)
+          except Exception:
+            sys.exit(1)
       interval: 10s
       timeout: 5s
       retries: 5
@@ -50,9 +71,24 @@ services:
       - HOST=0.0.0.0
       - TXTAI_URL=http://txtai:8000  # 使用内部服务名
       - PROVIDER_NAME=customer_kb
-      - STORAGE_PATH=/data/documents
+      - STORAGE_PATH=/data/documents  # SQLite 数据库和文档存储位置
       - DEBUG=false
+      # LLM 配置 (从 .env 读取)
+      - LLM_PROVIDER=${LLM_PROVIDER:-deepseek}
+      - LLM_MODEL=${LLM_MODEL:-deepseek-chat}
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://api.deepseek.com/v1}
+      - LLM_TIMEOUT_MS=${LLM_TIMEOUT_MS:-60000}
+      # 查询处理配置
+      - QUERY_PROCESSING_ENABLED=${QUERY_PROCESSING_ENABLED:-true}
+      - QUERY_EXPANSION_ENABLED=${QUERY_EXPANSION_ENABLED:-true}
+      # Chat 配置
+      - CHAT_DEFAULT_TEMPERATURE=${CHAT_DEFAULT_TEMPERATURE:-0.7}
+      - CHAT_DEFAULT_MAX_TOKENS=${CHAT_DEFAULT_MAX_TOKENS:-2048}
+      - CHAT_DEFAULT_SEARCH_LIMIT=${CHAT_DEFAULT_SEARCH_LIMIT:-5}
+      - CHAT_SYSTEM_PROMPT=${CHAT_SYSTEM_PROMPT:-}
     volumes:
+      # SQLite 数据库和文档存储 - 持久化到命名卷
       - knowledgebase_data:/data/documents
     depends_on:
       txtai:
@@ -75,6 +111,10 @@ networks:
 volumes:
   txtai_data:
     name: knowledgebase_txtai_data
+  nltk_data:
+    name: knowledgebase_nltk_data
+  hf_cache:
+    name: knowledgebase_hf_cache  # HuggingFace 模型缓存
   knowledgebase_data:
     name: knowledgebase_data
 
